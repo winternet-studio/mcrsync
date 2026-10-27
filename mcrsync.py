@@ -1678,7 +1678,7 @@ def prompt_string(stdscr, prompt, default=""):
 
 def confirm(stdscr, prompt):
     h, w = stdscr.getmaxyx()
-    lines = textwrap.wrap(prompt + " (y/n)", max(10, w - 4)) or [""]
+    lines = textwrap.wrap(prompt + " (Y/N)", max(10, w - 4)) or [""]
     lines = lines[:max(1, h - 3)]
     win = curses.newwin(len(lines) + 2, w, h - len(lines) - 2, 0)
     win.border()
@@ -1974,26 +1974,26 @@ HELP_TEXT = [
     "mcrsync - Midnight-Commander-style rsync queue manager",
     "",
     "GLOBAL KEYS (work in every view)",
-    "  ?  or  h        show this help (press again / Esc to close)",
-    "  t               toggle between NAV view and QUEUE editor view",
-    "  v               open/close the VERIFY view",
-    "  g               open/close the RUN LOG: every copied/created/deleted",
+    "  ?  or  H        show this help (press again / Esc to close)",
+    "  T               toggle between NAV view and QUEUE editor view",
+    "  V               open/close the VERIFY view",
+    "  G               open/close the RUN LOG: every copied/created/deleted",
     "                  file, conflict, error and connection event of this",
     "                  session, with times. It follows new lines; scroll",
     "                  with Up/Down/PgUp/PgDn/Home, End follows again.",
     "                  Keeps the last 5000 lines (not saved to disk).",
-    "  s               save the current queue (+ rsync options) to a file",
+    "  S               save the current queue (+ rsync options) to a file",
     "                  (asks before overwriting an existing file)",
-    "  l               load a queue (+ rsync options) from a file. If the",
+    "  L               load a queue (+ rsync options) from a file. If the",
     "                  file's rsync flags differ from yours, they are shown",
     "                  in full and you choose whether to use them. Not",
     "                  possible while a run is in progress.",
     "  F8              open the rsync-options review screen, then run the queue",
-    "  p               pause / resume queue execution (takes effect between",
+    "  P               pause / resume queue execution (takes effect between",
     "                  items, not mid-transfer - rsync itself can't be paused",
     "                  mid-file). If the run paused because an SSH",
-    "                  connection was lost, p logs in again first.",
-    "  q               quit (asks for confirmation)",
+    "                  connection was lost, P logs in again first.",
+    "  Q               quit (asks for confirmation)",
     "",
     "TYPING TEXT (all popups and prompts)",
     "  Fields start with the current value (e.g. the rsync flags or",
@@ -2017,10 +2017,10 @@ HELP_TEXT = [
     "                  name still exists. This also happens automatically",
     "                  once a full queue run finishes. On a remote pane",
     "                  whose connection was lost, F5 offers to reconnect.",
-    "  c               queue a copy: selected item in the LEFT (source)",
+    "  C               queue a copy: selected item in the LEFT (source)",
     "                  pane -> current directory shown in the RIGHT",
     "                  (target) pane. Only works when the LEFT pane is",
-    "                  active - if you press c while the RIGHT pane is",
+    "                  active - if you press C while the RIGHT pane is",
     "                  active the screen will flash twice and nothing",
     "                  is queued.",
     "  F2              rename the selected file/folder (in either pane).",
@@ -2035,7 +2035,7 @@ HELP_TEXT = [
     "                  rename: type the name, OK/Cancel/Tab/Enter/Esc.",
     "                  Refuses to create it if something with that name",
     "                  already exists.",
-    "  o               connect the active pane to a remote host over SSH,",
+    "  O               connect the active pane to a remote host over SSH,",
     "                  or - if it already is remote - disconnect it and go",
     "                  back to the local folder it showed before.",
     "",
@@ -2045,7 +2045,7 @@ HELP_TEXT = [
     "  local TARGET). Only one pane can be remote at a time, because rsync",
     "  can't copy directly between two remote hosts.",
     "",
-    "  Pressing o opens a form:",
+    "  Pressing O opens a form:",
     "    User          login name on the remote host",
     "    Host          host name or IPv4 address (IPv6 isn't supported)",
     "    Port          SSH port, normally 22",
@@ -2070,7 +2070,7 @@ HELP_TEXT = [
     "  If the connection is lost:",
     "    - in a pane: it shows the error; press F5 to reconnect.",
     "    - during a run: the run pauses before the next item and the",
-    "      status bar says so. Press p to log in again; the interrupted",
+    "      status bar says so. Press P to log in again; the interrupted",
     "      item is then retried from the start (rsync skips what was",
     "      already copied).",
     "  Queued items remember their host. When you load a saved queue or",
@@ -2080,7 +2080,7 @@ HELP_TEXT = [
     "QUEUE EDITOR VIEW (single pane: size, files, #, source, dest, status)",
     "  Up / Down       move selection",
     "  PgUp / PgDn     scroll a full page",
-    "  d  or  Delete   remove the selected item from the queue (confirms).",
+    "  D  or  Delete   remove the selected item from the queue (confirms).",
     "                  If a background size estimate was still being",
     "                  calculated for that item, it's cancelled right away.",
     "",
@@ -2092,7 +2092,7 @@ HELP_TEXT = [
     "    ...      still being estimated - check back in a moment",
     "    nan      size couldn't be determined (e.g. permission error)",
     "    offline  remote source that isn't connected yet - estimated",
-    "             once you connect (F8 or o)",
+    "             once you connect (F8 or O)",
     "",
     "  The status bar's far right shows overall progress in this view, and",
     "  in every view while a run is going: '<n>/<total> items, <percent>%",
@@ -2124,9 +2124,9 @@ HELP_TEXT = [
     "  Space           switch the selected flag on/off. Flags without a",
     "                  checkbox (e.g. --exclude=...) are listed under",
     "                  'Other flags' and kept as they are.",
-    "  e               edit all flags as a free-form string (shell-style",
+    "  E               edit all flags as a free-form string (shell-style",
     "                  quoting is respected)",
-    "  d               restore the built-in defaults",
+    "  D               restore the built-in defaults",
     "                  (-a -u --stats --itemize-changes)",
     "  Enter           confirm and start the run. If -u/--update is not",
     "                  in the flags you'll get an extra confirmation,",
@@ -2182,7 +2182,7 @@ HELP_TEXT = [
     "                  conflicting file: choose Skip / Rename existing /",
     "                  Autorename incoming. Once every conflict on an",
     "                  item is resolved it flips back to SYNCED OK.",
-    "  Esc  or  v      back to the previous view",
+    "  Esc  or  V      back to the previous view",
     "",
     "  Tab meanings:",
     "    COPIED        files rsync actually transferred",
@@ -2223,8 +2223,21 @@ HELP_TEXT = [
     "  - The item being copied can't be deleted from the queue; other",
     "    items can, and the run picks up the change.",
     "",
-    "Press Esc, h, or ? to close this help.",
+    "Press Esc, H, or ? to close this help.",
 ]
+
+# HELP_TEXT key column: keys at column 2, description at column 18
+HELP_KEY_LINE_RE = re.compile(r"^  \S.{13}  \S")
+# status bar hints: "key:label" separated by two spaces
+HINT_KEY_RE = re.compile(r"(?:^|  )([^ :]+):")
+
+
+def help_key_spans(line):
+    """(start, end) of each key in a HELP_TEXT line's key column."""
+    if not HELP_KEY_LINE_RE.match(line):
+        return []
+    return [m.span() for m in re.finditer(r"[^ ]+", line[:16])
+            if m.group() not in ("or", "/")]
 
 VERIFY_TABS = ["COPIED", "SKIPPED", "RENAMED", "ERRORS"]
 
@@ -2308,10 +2321,10 @@ class App(object):
         if not self.running:
             return ""
         if self.paused and self.reconnect_needed:
-            return "Waiting: connection lost - press p to log in again"
+            return "Waiting: connection lost - press P to log in again"
         it = self.running_item()
         if it is None:
-            return "Paused between items - press p to resume" if self.paused else "Starting next item..."
+            return "Paused between items - press P to resume" if self.paused else "Starting next item..."
         n = self.queue.index(it) + 1 if it in self.queue else 0
         return "#{0} {1} | {2}".format(n, it.src_display(), it.progress.describe())
 
@@ -2526,7 +2539,7 @@ class App(object):
                 if dead:
                     self.reconnect_needed = dead
                     self.paused = True
-                    self.log("CONNECTION LOST: {0} - press p to log in again and resume".format(
+                    self.log("CONNECTION LOST: {0} - press P to log in again and resume".format(
                         ", ".join(s.key() for s in dead)))
                     continue
                 self.queue_index = idx
@@ -2546,7 +2559,7 @@ class App(object):
             failed = self.registry.open_interactive(self.stdscr, self.reconnect_needed)
             if failed:
                 message(self.stdscr, "Still not connected to {0} - the run stays paused. "
-                        "Press p to try again.".format(", ".join(s.key() for s in failed)))
+                        "Press P to try again.".format(", ".join(s.key() for s in failed)))
                 return
             self.reconnect_needed = []
             self.reschedule_offline_sizes()
@@ -2585,7 +2598,7 @@ class App(object):
         other = self.right if pane is self.left else self.left
         if other.fs.is_remote:
             message(self.stdscr, "The {0} pane is already connected to {1}. rsync can't copy "
-                    "between two remote hosts, so only one pane can be remote - press o in "
+                    "between two remote hosts, so only one pane can be remote - press O in "
                     "the {0} pane to disconnect it first.".format(
                         self.pane_name(other), other.fs.spec.key()))
             return
@@ -2763,27 +2776,27 @@ class App(object):
     def draw_statusbar(self, h, w):
         if self.view == VIEW_NAV:
             pane = self.left if self.active == "left" else self.right
-            ssh_key = "o:ssh-disconnect" if pane.fs.is_remote else "o:ssh-connect"
-            help_text = ("?/h:help  Tab:switch  <-/->:nav  c:queue-copy  " + ssh_key +
-                          "  F2:rename  Ins:mkdir  F5:refresh  t:queue-view  "
-                          "v:verify  g:log  s:save  l:load  F8:run  p:pause  q:quit")
+            ssh_key = "O:disconnect SSH" if pane.fs.is_remote else "O:connect SSH"
+            help_text = ("?/H:help  Tab:switch  <-/->:nav  " + ssh_key + "  C:to queue"
+                          "  F2:rename  Ins:mkdir  F5:refresh  T:view queue  "
+                          "V:verify  G:log  S:save  L:load  F8:run  P:pause  Q:quit")
         elif self.view == VIEW_QUEUE:
-            help_text = ("?/h:help  t:nav-view  v:verify  g:log  s:save  l:load  F8:run  "
-                          "p:pause  PgUp/PgDn:scroll  q:quit")
+            help_text = ("?/H:help  T:nav-view  V:verify  G:log  S:save  L:load  F8:run  "
+                          "P:pause  PgUp/PgDn:scroll  Q:quit")
         elif self.view == VIEW_VERIFY:
-            help_text = "?/h:help  Tab:cycle-tab  Enter:resolve  Esc/v:back  q:quit"
+            help_text = "?/H:help  Tab:cycle-tab  Enter:resolve  Esc/V:back  Q:quit"
         elif self.view == VIEW_HELP:
-            help_text = "Esc/h/?:close  Up/Down/PgUp/PgDn:scroll  q:quit"
+            help_text = "Esc/H/?:close  Up/Down/PgUp/PgDn:scroll  Q:quit"
         elif self.view == VIEW_LOG:
-            help_text = "Esc/g:close  Up/Down/PgUp/PgDn:scroll  End:follow new lines  q:quit"
+            help_text = "Esc/G:close  Up/Down/PgUp/PgDn:scroll  End:follow new lines  Q:quit"
         else:
-            help_text = ("?/h:help  Up/Down:move  Space:toggle  e:edit as text  d:defaults  "
-                         "Enter:confirm&run  Esc:cancel  q:quit")
+            help_text = ("?/H:help  Up/Down:move  Space:toggle  E:edit as text  D:defaults  "
+                         "Enter:confirm&run  Esc:cancel  Q:quit")
         # Run state goes first so a narrow terminal can't cut it off.
         run_state = ""
         if self.running:
             if self.paused and self.reconnect_needed:
-                state = "PAUSED - connection lost, press p to log in again"
+                state = "PAUSED - connection lost, press P to log in again"
             elif self.paused:
                 state = "PAUSED"
             else:
@@ -2803,11 +2816,19 @@ class App(object):
                     ok_count, len(self.queue), percent, eta_str)
 
         avail = max(0, w - 1)
+        hints_end = avail
         if right_text:
             room = avail - len(right_text)
             if room >= len(run_state):
                 bar = bar[:room].ljust(room) + right_text
+                hints_end = room
         safe_addstr(self.stdscr, h - 1, 0, bar.ljust(avail), curses.color_pair(6))
+        for m in HINT_KEY_RE.finditer(help_text):
+            start = len(run_state) + m.start(1)
+            end = min(len(run_state) + m.end(1), hints_end)
+            if start < end:
+                safe_addstr(self.stdscr, h - 1, start, bar[start:end],
+                            curses.color_pair(6) | curses.A_BOLD)
 
     def draw_pane(self, win, pane, title, active):
         win.erase()
@@ -3106,7 +3127,7 @@ class App(object):
             y += 1
 
         safe_addstr(win, h - 3, 2,
-                    "[Space] toggle   [e] edit as text   [d] defaults   "
+                    "[Space] toggle   [E] edit as text   [D] defaults   "
                     "[Enter] confirm & run   [Esc] cancel", curses.A_BOLD)
         win.noutrefresh()
 
@@ -3167,7 +3188,7 @@ class App(object):
     def draw_help(self, h, w):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
-        safe_addstr(win, 0, 2, " HELP (Esc/h/? to close) ", curses.A_BOLD)
+        safe_addstr(win, 0, 2, " HELP (Esc/H/? to close) ", curses.A_BOLD)
         page_h = h - 4
         max_scroll = max(0, len(HELP_TEXT) - page_h)
         self.help_scroll = max(0, min(self.help_scroll, max_scroll))
@@ -3175,7 +3196,10 @@ class App(object):
             idx = self.help_scroll + i
             if idx >= len(HELP_TEXT):
                 break
-            safe_addstr(win, 2 + i, 2, HELP_TEXT[idx])
+            line = HELP_TEXT[idx]
+            safe_addstr(win, 2 + i, 2, line)
+            for start, end in help_key_spans(line):
+                safe_addstr(win, 2 + i, 2 + start, line[start:end], curses.A_BOLD)
         if len(HELP_TEXT) > page_h:
             pct = 100 if max_scroll == 0 else int(100 * self.help_scroll / max_scroll)
             safe_addstr(win, h - 3, 2,
@@ -3210,6 +3234,9 @@ class App(object):
             c = self.stdscr.getch()
             if c in (-1, curses.KEY_RESIZE):
                 continue
+            # keys are shown upper case, but either case works
+            if ord('A') <= c <= ord('Z'):
+                c += 32
             if self.too_small():
                 # nothing is visible, so no key may act on hidden state
                 if c == ord('q') and not self.running:
@@ -3413,7 +3440,7 @@ class App(object):
         elif c in (curses.KEY_DC, ord('d')):
             if self.queue and self.queue[self.queue_index].status == STATUS_RUNNING:
                 message(self.stdscr, "This item is being copied right now and can't be deleted. "
-                        "Press p to pause - the run stops after this item.")
+                        "Press P to pause - the run stops after this item.")
             elif self.queue and confirm(self.stdscr, "Delete selected queue item?"):
                 doomed = self.queue[self.queue_index]
                 doomed.cancel_event.set()
