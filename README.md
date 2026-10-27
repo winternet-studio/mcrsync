@@ -13,7 +13,7 @@ A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude
 * **Background Sizing:** Each item's total size and number of files (SIZE and FILES columns in the queue view) are calculated lazily in the background as you build your queue, keeping the UI responsive. This is everything rsync will review, whether or not it already exists on the target.
 * **Live Progress:** While a run is going, a progress line shows the running item's phase (*preparing*, *scanning*, *copying*, *deleting*, *finishing*), how much of it has been reviewed against those totals (files already up to date on the target count too, so this reaches 100%), what was actually copied, speed, conflicts, elapsed time and the file being copied right now. For example: `> #3 photos | copying | reviewed 812.4M of 1.7G (47%) | 1,234 of 8,000 files | copied 4 files, 1.1M | 301.3K/s | 4m 05s | now: 2019/img_0123.jpg`. The status bar shows whole-queue progress and ETA in every view. A run log (`g`) lists every copied, created and deleted file, conflict, error and connection event with times.
 * **Resumable Queues:** Save your entire queue and custom `rsync` options to a JSON file. You can pause, quit, reload, and resume right where you left off. Remote hosts are saved with the queue (never passwords).
-* **Safe Dry Runs:** Add `-n` to the rsync flags to see what would be copied and which files would conflict, without touching anything. Dry-run results are marked `DRY RUN OK` / `DRY RUN INCOMPLETE`, so a later real run still processes every item.
+* **Safe Dry Runs:** Tick `-n, --dry-run` on the `F8` screen to see what would be copied and which files would conflict, without touching anything. Dry-run results are marked `DRY RUN OK` / `DRY RUN INCOMPLETE`, so a later real run still processes every item.
 * **Conflict Verification:** A dedicated "Verify" view lets you review skipped files, renamed items, and errors after a run, allowing you to manually resolve conflicts (Skip, Rename existing, or Auto-rename incoming). Resolutions re-check the conflict first and never overwrite an existing file. Covered by automated tests, locally and over SSH.
 * **Refuses surprising copies:** A file whose target name is an existing folder, a folder whose target name is an existing file, and a folder copied into itself are reported as `SYNC FAIL` instead of being run.
 * **Any file name:** Names with spaces, quotes, newlines, non-ASCII characters or a leading `-` or `.` work locally and remotely. Names that can't be displayed (control characters, invalid UTF-8) are shown with `?` instead of breaking the screen.
@@ -41,7 +41,7 @@ See [Safety](#safety) for the full list of safeguards.
 2. **Build the Queue:** Use `Tab` to switch between the left (Source) and right (Target) panes. Highlight a file or directory on the left, navigate to your desired destination on the right, and press `c` to add it to the queue. As you add items, their sizes will compute in the background.
    * **Remote host (optional):** In the pane that should be remote, press `o` and fill in user, host, port, base path and (optionally) a key file. Leave the key file blank to log in with a password: the screen switches to the plain terminal and `ssh` asks for it, then the file manager comes back. Only one pane can be remote at a time. Your entries (but not the password) are remembered in `~/.mcrsync.yaml`.
 3. **Review and Run:** Once your queue is built, press `F8` to open the Execution Options.
-4. **Customize Flags:** (Optional but recommended) Press `e` to edit your `rsync` flags (see the *Advanced `rsync` Options* section below). The prompt starts with your current flags, so you can just add or remove one. The screen always lists every flag and marks the ones that can delete or overwrite data or run commands.
+4. **Customize Flags:** (Optional) Switch common flags on or off with `Up`/`Down` and `Space`, or press `e` to edit all flags as text (see the *Advanced `rsync` Options* section below). The screen shows the exact `rsync` command the first item will run with, and warns about flags that can delete or overwrite data or run commands.
 5. **Start:** Press `Enter` to confirm and begin the queue.
 6. **Save:** Once the queue starts, press `s` to save your progress to a `.json` file. The file saves both the remaining queue and your custom `rsync` flags in case you need to load (`l`) and resume later. 
 
@@ -53,7 +53,7 @@ See [Safety](#safety) for the full list of safeguards.
 
 By default, the script uses `-a -u --stats --itemize-changes`. However, depending on your backup target, these might not be desirable for some reason (i.e. standard archive flags might cause permission errors.)
 
-If you only care about transferring the actual files and want to ignore users/permissions, press `F8` then `e` and use this robust alternative set of flags:
+If you only care about transferring the actual files and want to ignore users/permissions, press `F8` then `e` and use this robust alternative set of flags (flags without a checkbox, like `--no-perms`, are listed under *Other flags* on that screen):
 
 ```text
 -a -u --whole-file --no-perms --no-owner --no-group --partial --partial-dir=.rsync-partial --stats --itemize-changes
@@ -99,6 +99,12 @@ The *reviewed* percentage is measured against the item's size estimate. rsync's 
 ### QUEUE View (Editor)
 * `Up` / `Down` / `PgUp` / `PgDn`: Navigate the list.
 * `d` or `Delete`: Remove the selected item from the queue. The item being copied right now can't be removed; other items can, also during a run.
+
+### RSYNC OPTIONS Screen (`F8`)
+The flags apply to every item in the queue.
+* `Up` / `Down`: Move through the flag checkboxes. `Space`: Switch the selected flag on or off.
+* `e`: Edit all flags as text (shell-style quoting). `d`: Restore the defaults.
+* `Enter`: Confirm and start the run (asks again if `-u` is off). `Esc`: Go back without running.
 
 ### Typing Text (all popups and prompts)
 * Fields start with the current value (e.g. the rsync flags, or `queue.json`), so you can edit instead of retyping.
@@ -151,7 +157,7 @@ While monitoring your queue, items will display one of the following statuses:
 * The password is never seen or stored by mcrsync; queue files and settings contain host names and key file paths only.
 * When mcrsync exits, including when the terminal is closed, it logs out of all remote hosts.
 
-**What stays your responsibility:** flags you add yourself in expert mode (`--delete` and the like) do what rsync says they do; the F8 screen marks the risky ones. Confirming an unknown host key in `ssh`'s prompt is also up to you.
+**What stays your responsibility:** flags you switch on yourself (`--delete` and the like) do what rsync says they do; the F8 screen marks the risky ones. Confirming an unknown host key in `ssh`'s prompt is also up to you.
 
 ---
 

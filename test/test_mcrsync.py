@@ -84,6 +84,24 @@ class RsyncFlagsTest(unittest.TestCase):
         self.assertEqual(m.RsyncFlags.without(["-avu", "-u", "--update", "--stats"], "u", "--update"),
                          ["-av", "--stats"])
 
+    def choice(self, long_name):
+        return next(c for c in m.RsyncFlags.CHOICES if c[1] == long_name)
+
+    def test_toggle(self):
+        toggle = m.RsyncFlags.toggle
+        self.assertEqual(toggle(["-avu", "--stats"], self.choice("--update")), ["-av", "--stats"])
+        self.assertEqual(toggle(["-a"], self.choice("--update")), ["-a", "-u"])
+        self.assertEqual(toggle(["-a"], self.choice("--stats")), ["-a", "--stats"])
+        self.assertEqual(toggle(["-a", "--stats"], self.choice("--stats")), ["-a"])
+        # --delete-after has no checkbox and must not count as --delete
+        self.assertEqual(toggle(["--delete-after"], self.choice("--delete")),
+                         ["--delete-after", "--delete"])
+
+    def test_others(self):
+        self.assertEqual(m.RsyncFlags.others(["-avu", "--stats", "--exclude=a b", "--delete-after"]),
+                         ["-v", "--exclude=a b", "--delete-after"])
+        self.assertEqual(m.RsyncFlags.others(list(m.DEFAULT_RSYNC_OPTS)), [])
+
 
 class ParseOutputTest(unittest.TestCase):
     def test_parse(self):

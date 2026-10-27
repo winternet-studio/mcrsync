@@ -478,12 +478,28 @@ class RsyncFlags(object):
 
     SHORT_CLUSTER_RE = re.compile(r"^-[A-Za-z]+$")
 
+    # Checkboxes on the F8 screen: (short or None, long, description, risky)
+    CHOICES = [
+        ("a", "--archive", "archive mode (recurse, perms, times, links, ...)", False),
+        ("u", "--update", "skip files that are newer on the target (safety net)", False),
+        ("n", "--dry-run", "show what would happen, change nothing", False),
+        ("z", "--compress", "compress data during transfer", False),
+        ("c", "--checksum", "compare by checksum, not size + time (slow)", False),
+        ("H", "--hard-links", "preserve hard links", False),
+        ("A", "--acls", "preserve ACLs", False),
+        ("X", "--xattrs", "preserve extended attributes", False),
+        (None, "--partial", "keep partially copied files (resume big files)", False),
+        (None, "--stats", "transfer statistics (fills the Verify view)", False),
+        (None, "--itemize-changes", "per-file change list", False),
+        (None, "--delete", "delete target files that aren't in the source", True),
+    ]
+
     @staticmethod
     def has(opts, short, long_name):
         for o in opts:
             if o == long_name:
                 return True
-            if RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
+            if short and RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
                 return True
         return False
 
@@ -493,7 +509,7 @@ class RsyncFlags(object):
         for o in opts:
             if o == long_name:
                 continue
-            if RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
+            if short and RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
                 o = "-" + o[1:].replace(short, "")
                 if o == "-":
                     continue
@@ -520,6 +536,20 @@ class RsyncFlags(object):
     @staticmethod
     def has_update(opts):
         return RsyncFlags.has(opts, "u", "--update")
+
+    @staticmethod
+    def toggle(opts, choice):
+        short, long_name = choice[0], choice[1]
+        if RsyncFlags.has(opts, short, long_name):
+            return RsyncFlags.without(opts, short, long_name)
+        return list(opts) + ["-" + short if short else long_name]
+
+    @staticmethod
+    def others(opts):
+        """The flags no checkbox covers."""
+        for choice in RsyncFlags.CHOICES:
+            opts = RsyncFlags.without(opts, choice[0], choice[1])
+        return opts
 
 
 # ----------------------------------------------------------------------
@@ -1332,6 +1362,12 @@ class RsyncRunner(object):
         # '--': a path can never be taken as an option
         return cmd + ["--", src_fs.rsync_arg(src), dst_fs.rsync_arg(dst)]
 
+    def item_cmd(self, item, rsync_opts, src_fs, dst_fs):
+        # added last so they win over e.g. a user's --progress
+        return self.build_cmd(list(rsync_opts) + ["--info=skip1,progress2,name2",
+                                                  RsyncRunner.OUT_FORMAT],
+                              src_fs, item.src, dst_fs, item.dst, item.is_dir)
+
     @staticmethod
     def _spawn(cmd):
         # Bytes + fsdecode: odd bytes in rsync output can't crash the decode.
@@ -1403,10 +1439,7 @@ class RsyncRunner(object):
                 parent = item.dst if item.is_dir else dst_fs.pathmod.dirname(item.dst)
                 if parent:
                     dst_fs.makedirs(parent)
-            # added last so they win over e.g. a user's --progress
-            cmd = self.build_cmd(list(rsync_opts) + ["--info=skip1,progress2,name2",
-                                                     RsyncRunner.OUT_FORMAT],
-                                 src_fs, item.src, dst_fs, item.dst, item.is_dir)
+            cmd = self.item_cmd(item, rsync_opts, src_fs, dst_fs)
         except ConnectionLost as e:
             item.status = STATUS_PENDING
             log_cb("CONNECTION LOST: {0}".format(e))
@@ -2087,7 +2120,11 @@ HELP_TEXT = [
     "",
     "RSYNC OPTIONS SCREEN (opened by F8, before anything actually runs)",
     "  These flags are GLOBAL - they apply to every item in the queue.",
-    "  e               edit the flags as a free-form string (shell-style",
+    "  Up / Down       move through the flag checkboxes",
+    "  Space           switch the selected flag on/off. Flags without a",
+    "                  checkbox (e.g. --exclude=...) are listed under",
+    "                  'Other flags' and kept as they are.",
+    "  e               edit all flags as a free-form string (shell-style",
     "                  quoting is respected)",
     "  d               restore the built-in defaults",
     "                  (-a -u --stats --itemize-changes)",
@@ -2096,6 +2133,9 @@ HELP_TEXT = [
     "                  because that flag is what protects newer target",
     "                  files from being overwritten.",
     "  Esc             cancel, go back without starting anything",
+    "",
+    "  Below the checkboxes is the exact rsync command the first item to",
+    "  run will get - the other items differ only in their paths.",
     "",
     "  Note: --stats fills in the Verify view's counts; removing it is fine",
     "  for rsync itself, but Verify will have less detail to show. The",
@@ -2211,6 +2251,7 @@ class App(object):
         self.verify_index = 0
         self.flash_count = 0
         self.rsync_opts = list(DEFAULT_RSYNC_OPTS)
+        self.options_index = 0
         self.help_scroll = 0
         self.prev_view = VIEW_NAV
         self.pending_pane_refresh = False
@@ -2736,7 +2777,8 @@ class App(object):
         elif self.view == VIEW_LOG:
             help_text = "Esc/g:close  Up/Down/PgUp/PgDn:scroll  End:follow new lines  q:quit"
         else:
-            help_text = "?/h:help  e:edit flags  d:defaults  Enter:confirm&run  Esc:cancel  q:quit"
+            help_text = ("?/h:help  Up/Down:move  Space:toggle  e:edit as text  d:defaults  "
+                         "Enter:confirm&run  Esc:cancel  q:quit")
         # Run state goes first so a narrow terminal can't cut it off.
         run_state = ""
         if self.running:
@@ -3004,68 +3046,95 @@ class App(object):
     def draw_options(self, h, w):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
-        title = " RSYNC OPTIONS (expert mode) - applies to ALL queued items "
+        title = " RSYNC OPTIONS - apply to ALL queued items "
         safe_addstr(win, 0, 2, title, curses.A_BOLD)
-        # Shown in full (wrapped, quoted): flags may come from a loaded queue
-        # file, and a cut-off line could hide a dangerous one.
-        cur = " ".join(shlex.quote(o) for o in self.rsync_opts)
-        safe_addstr(win, 2, 2, "Current command line flags:")
-        flag_lines = textwrap.wrap(cur, max(10, w - 8), break_on_hyphens=False) or [""]
-        y = 3
-        for line in flag_lines[:max(1, h - 16)]:
-            safe_addstr(win, y, 4, line, curses.A_REVERSE)
-            y += 1
-        safe_addstr(win, y + 1, 2, "Full rsync command that will run per item:")
-        safe_addstr(win, y + 2, 4, "rsync <flags above> --info=skip1,progress2 <source>/ <dest>/",
-                    curses.A_DIM)
-        hosts = sorted(set(s.key() for it in self.queue for s in it.conn_specs()))
-        warn_y = y + 4
-        if hosts:
-            safe_addstr(win, y + 3, 4, ("Remote items also get: -s -e 'ssh ...'   Hosts: " +
-                                        ", ".join(hosts))[:w - 8], curses.A_DIM)
-            warn_y = y + 5
+        text_w = max(10, w - 8)
+        opts = self.rsync_opts
+        red = curses.color_pair(4) | curses.A_BOLD
 
-        risky = RsyncFlags.risky(self.rsync_opts)
+        # Command and warnings get their rows before the checkboxes: flags may
+        # come from a loaded queue file, and a hidden one could be dangerous.
+        tail = []   # (indent, text, attr)
+        others = " ".join(shlex.quote(o) for o in RsyncFlags.others(opts)) or "(none)"
+        for i, line in enumerate(textwrap.wrap("Other flags: " + others, text_w,
+                                               break_on_hyphens=False)):
+            tail.append((2 if i == 0 else 4, line, 0))
+        tail.append((2, "", 0))
+        idx, cmd = self.options_preview_cmd()
+        tail.append((2, "Command for item #{0} of {1} (other items get their own paths):".format(
+            idx + 1, len(self.queue)), curses.A_BOLD))
+        for line in textwrap.wrap(cmd, text_w, break_on_hyphens=False):
+            tail.append((4, line, curses.A_REVERSE))
+        tail.append((2, "", 0))
+        risky = RsyncFlags.risky(opts)
         if risky:
-            safe_addstr(win, warn_y, 2,
-                        "CAUTION: these flags can delete or overwrite data or run commands: " +
-                        " ".join(risky), curses.color_pair(4) | curses.A_BOLD)
-            warn_y += 2
-        if RsyncFlags.is_dry_run(self.rsync_opts):
-            safe_addstr(win, warn_y, 2,
-                        "DRY RUN (-n): nothing will be copied or created. Items end up as "
-                        "DRY RUN OK / DRY RUN INCOMPLETE.", curses.color_pair(7) | curses.A_BOLD)
-            warn_y += 2
-        if not RsyncFlags.has_update(self.rsync_opts):
-            safe_addstr(win, warn_y, 2,
-                        "WARNING: -u/--update is NOT set - newer files in "
-                        "the target could be overwritten!", curses.color_pair(4) | curses.A_BOLD)
-            warn_y += 2
+            tail.append((2, "CAUTION: these flags can delete or overwrite data or run "
+                            "commands: " + " ".join(risky), red))
+        if RsyncFlags.is_dry_run(opts):
+            tail.append((2, "DRY RUN (-n): nothing will be copied or created. Items end up "
+                            "as DRY RUN OK / DRY RUN INCOMPLETE.",
+                         curses.color_pair(7) | curses.A_BOLD))
+        if not RsyncFlags.has_update(opts):
+            tail.append((2, "WARNING: -u/--update is NOT set - newer files in the target "
+                            "could be overwritten!", red))
 
-        common = [
-            ("-a", "archive mode (recurse, perms, times, links, etc.)"),
-            ("-u / --update", "skip files newer on the receiver (recommended safety net)"),
-            ("-n / --dry-run", "show what would happen, transfer nothing"),
-            ("-v", "verbose output"),
-            ("-z", "compress data during transfer"),
-            ("--delete", "delete files in dest that no longer exist in source (DANGEROUS)"),
-            ("--stats", "print transfer statistics (used for the Verify view)"),
-            ("--itemize-changes", "per-file change list (used for the Verify view)"),
-        ]
-        safe_addstr(win, warn_y + 1, 2, "Reference - common flags:", curses.A_UNDERLINE)
-        for i, (flag, desc) in enumerate(common):
-            y = warn_y + 2 + i
-            if y >= h - 6:
+        # Checkboxes get the rows left over, scrolled to keep the cursor visible.
+        choices = RsyncFlags.CHOICES
+        list_h = max(1, min(len(choices), h - 7 - len(tail)))
+        self.options_index = max(0, min(self.options_index, len(choices) - 1))
+        scroll = max(0, self.options_index - list_h + 1)
+        safe_addstr(win, 2, 2, "Flags:", curses.A_UNDERLINE)
+        for i in range(list_h):
+            n = scroll + i
+            if n >= len(choices):
                 break
-            safe_addstr(win, y, 4, "{0:<16} {1}".format(flag, desc), curses.A_DIM)
+            short, long_name, desc, is_risky = choices[n]
+            mark = "[x]" if RsyncFlags.has(opts, short, long_name) else "[ ]"
+            name = "-{0}, {1}".format(short, long_name) if short else long_name
+            line = "{0} {1} {2:<20} {3}".format(">" if n == self.options_index else " ",
+                                                mark, name, desc)
+            attr = red if is_risky else 0
+            if n == self.options_index:
+                attr |= curses.A_REVERSE
+            safe_addstr(win, 3 + i, 2, line, attr)
 
-        safe_addstr(win, h - 4, 2,
-                    "[e] edit flags   [d] restore defaults   [Enter] confirm & run   [Esc] cancel",
-                    curses.A_BOLD)
+        y = 4 + list_h
+        for indent, line, attr in tail:
+            if y >= h - 3:
+                break
+            safe_addstr(win, y, indent, line, attr)
+            y += 1
+
+        safe_addstr(win, h - 3, 2,
+                    "[Space] toggle   [e] edit as text   [d] defaults   "
+                    "[Enter] confirm & run   [Esc] cancel", curses.A_BOLD)
         win.noutrefresh()
 
+    def options_preview_cmd(self):
+        """(queue index, shell-quoted command) of the first item a run
+        would copy."""
+        idx = next((i for i, it in enumerate(self.queue) if it.status != STATUS_OK), 0)
+        item = self.queue[idx]
+        try:
+            cmd = self.runner.item_cmd(item, self.rsync_opts,
+                                       self.registry.fs_for(item.src_conn),
+                                       self.registry.fs_for(item.dst_conn))
+        except FsError as e:
+            return idx, "(no command: {0})".format(e)
+        return idx, " ".join(shlex.quote(o) for o in cmd)
+
     def handle_options_key(self, c):
-        if c == ord('e'):
+        if c == curses.KEY_UP:
+            self.options_index = max(0, self.options_index - 1)
+        elif c == curses.KEY_DOWN:
+            self.options_index = min(len(RsyncFlags.CHOICES) - 1, self.options_index + 1)
+        elif c == ord(' '):
+            opts = RsyncFlags.toggle(self.rsync_opts, RsyncFlags.CHOICES[self.options_index])
+            if opts:
+                self.rsync_opts = opts
+            else:
+                flash(self.stdscr)
+        elif c == ord('e'):
             new_line = prompt_string(self.stdscr, "rsync flags:",
                                       " ".join(shlex.quote(o) for o in self.rsync_opts))
             if new_line is None:
@@ -3218,6 +3287,7 @@ class App(object):
                 message(self.stdscr, "A run is already in progress.")
             else:
                 self.view = VIEW_OPTIONS
+                self.options_index = 0
         elif c == ord('p'):
             self.toggle_pause()
         return True

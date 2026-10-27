@@ -284,6 +284,15 @@ class UiTest(unittest.TestCase):
         s = self.wait_for("RSYNC OPTIONS")
         self.assertNotIn("--remove-source-files", s)
         self.assertNotIn("CAUTION", s)
+        # checkboxes: toggling -n (3rd) shows up in the command preview
+        self.assertIn("Command for item #1 of 1", s)
+        self.keys("Down")
+        self.keys("Down")
+        self.keys("Space")
+        s = self.wait_for("DRY RUN (-n)")
+        self.assertIn("rsync -a -u --stats --itemize-changes -n --info=", s)
+        self.keys("Space")
+        self.assertNotIn("DRY RUN (-n)", self.screen())
         self.keys("Escape")
         # accepted: the options screen shows the full list plus a caution
         self.keys("l")
@@ -410,7 +419,7 @@ class UiTest(unittest.TestCase):
         self.type(" --delete")
         self.keys("Escape")
         s = self.wait_for("RSYNC OPTIONS")
-        self.assertNotIn("--delete ", s.split("Reference")[0])
+        self.assertNotIn("--delete", s.split("Command for item")[1])
         # pre-filled flags can be extended instead of retyped
         self.keys("e")
         self.type(" -v")
