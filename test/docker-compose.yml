@@ -1,0 +1,50 @@
+# Test rig for mcrsync - see test/README.md
+name: mcrsync-test
+
+services:
+  keygen:
+    image: alpine:3.20
+    volumes:
+      - keys:/keys
+    command: >
+      sh -c "apk add --no-cache openssh-keygen >/dev/null &&
+             [ -f /keys/id_test ] || ssh-keygen -q -t ed25519 -N '' -f /keys/id_test &&
+             chmod 644 /keys/id_test /keys/id_test.pub"
+
+  remote-alpine:
+    build:
+      context: .
+      dockerfile: remote/Dockerfile.alpine
+    volumes:
+      - keys:/keys:ro
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+
+  remote-debian:
+    build:
+      context: .
+      dockerfile: remote/Dockerfile.debian
+    volumes:
+      - keys:/keys:ro
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    volumes:
+      - keys:/keys:ro
+      - ..:/app:ro
+    environment:
+      MCRSYNC_TEST_HOSTS: "remote-alpine remote-debian"
+    stdin_open: true
+    tty: true
+    depends_on:
+      - remote-alpine
+      - remote-debian
+
+volumes:
+  keys:

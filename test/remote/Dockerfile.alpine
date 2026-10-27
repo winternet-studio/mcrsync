@@ -1,0 +1,8 @@
+# busybox userland - stands in for a Synology remote
+FROM alpine:3.20
+
+RUN apk add --no-cache openssh-server rsync
+COPY remote/entrypoint.sh /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+EXPOSE 2222
+ENTRYPOINT ["/entrypoint.sh"]
