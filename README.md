@@ -102,8 +102,9 @@ Press `O` and choose *rclone remote* to show a remote from your own `rclone conf
 
 ### NAV View (File Browser)
 * `Tab`: Switch active pane between SOURCE (left) and TARGET (right).
-* `Left`: Go to the parent directory.
+* `Left` / `Backspace`: Go to the parent directory.
 * `Right` / `Enter`: Enter the highlighted directory.
+* `Home` / `End`: Jump to the first / last item.
 * `F5`: Refresh both panes (offers to log in again if a remote pane lost its connection).
 * `O`: Connect the active pane to a remote host via SSH or to an rclone remote, or disconnect it and return to the local folder.
 * `C`: Queue a copy (Left pane selection -> Right pane current directory).

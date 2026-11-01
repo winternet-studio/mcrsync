@@ -6,7 +6,7 @@ mcrsync.py - A Midnight-Commander-style rsync queue manager.
 Targets Python 3.4 (Synology chroot). Avoids f-strings, subprocess.run,
 os.scandir and other 3.5+-only features on purpose.
 
-Either pane can be switched to a remote SSH host (key 'o'); rsync then runs
+Either pane can be switched to a remote SSH host (key O); rsync then runs
 over a shared ssh ControlMaster connection. A pane can also show an rclone
 remote (cloud/object storage from the user's own rclone config); items
 involving one are copied with rclone instead of rsync. See HELP_TEXT.
@@ -17,24 +17,25 @@ Views:
   VERIFY - post-run report: COPIED / SKIPPED / RENAMED / ERRORS tabs
 
 Keys (NAV + QUEUE unless noted):
-  Tab        toggle left/right pane        (NAV only)
-  Left       go to parent dir              (NAV only)
-  Right/Ent  enter directory                (NAV only)
-  O          connect active pane to SSH / rclone, or disconnect it (NAV only)
-  C          queue copy of selected item in LEFT pane -> current RIGHT dir
-  T          toggle NAV <-> QUEUE view
-  V          open VERIFY view (after a run, or to inspect last run)
-  S          save queue to a .json file
-  L          load queue from a .json file
-  F8         execute the queue
-  P          pause / resume execution
-  PgUp/PgDn  scroll active pane / list
-  Q          quit (confirm)
+  Tab        Toggle left/right pane        (NAV only)
+  Left/Bksp  Go to parent dir              (NAV only)
+  Home/End   Jump to first/last item       (NAV only)
+  Right/Ent  Enter directory               (NAV only)
+  O          Connect active pane to SSH / rclone, or disconnect it (NAV only)
+  C          Queue copy of selected item in LEFT pane -> current RIGHT dir
+  T          Toggle NAV <-> QUEUE view
+  V          Open VERIFY view (after a run, or to inspect last run)
+  S          Save queue to a .json file
+  L          Load queue from a .json file
+  F8         Execute the queue
+  P          Pause / resume execution
+  PgUp/PgDn  Scroll active pane / list
+  Q          Quit (confirm)
 
 In VERIFY view:
-  Tab        cycle COPIED / SKIPPED / RENAMED / ERRORS
-  Enter      (on a SKIPPED "conflict" row) resolve: Skip / Rename / Autorename
-  Esc / V    back to previous view
+  Tab        Cycle COPIED / SKIPPED / RENAMED / ERRORS
+  Enter      (On a SKIPPED "conflict" row) resolve: Skip / Rename / Autorename
+  Esc / V    Back to previous view
 """
 
 import curses
@@ -669,18 +670,18 @@ class RsyncFlags(FlagSet):
     TOOL = TOOL_RSYNC
     DEFAULTS = DEFAULT_RSYNC_OPTS
     CHOICES = [
-        ("a", "--archive", "archive mode (recurse, perms, times, links, ...)", False),
-        ("u", "--update", "skip files that are newer on the target (safety net)", False),
-        ("n", "--dry-run", "show what would happen, change nothing", False),
-        ("z", "--compress", "compress data during transfer", False),
-        ("c", "--checksum", "compare by checksum, not size + time (slow)", False),
-        ("H", "--hard-links", "preserve hard links", False),
-        ("A", "--acls", "preserve ACLs", False),
-        ("X", "--xattrs", "preserve extended attributes", False),
-        (None, "--partial", "keep partially copied files (resume big files)", False),
-        (None, "--stats", "transfer statistics (fills the Verify view)", False),
-        (None, "--itemize-changes", "per-file change list", False),
-        (None, "--delete", "delete target files that aren't in the source", True),
+        ("a", "--archive", "Archive mode (recurse, perms, times, links, ...)", False),
+        ("u", "--update", "Skip files that are newer on the target (safety net)", False),
+        ("n", "--dry-run", "Show what would happen, change nothing", False),
+        ("z", "--compress", "Compress data during transfer", False),
+        ("c", "--checksum", "Compare by checksum, not size + time (slow)", False),
+        ("H", "--hard-links", "Preserve hard links", False),
+        ("A", "--acls", "Preserve ACLs", False),
+        ("X", "--xattrs", "Preserve extended attributes", False),
+        (None, "--partial", "Keep partially copied files (resume big files)", False),
+        (None, "--stats", "Transfer statistics (fills the Verify view)", False),
+        (None, "--itemize-changes", "Per-file change list", False),
+        (None, "--delete", "Delete target files that aren't in the source", True),
     ]
     SAFE_SHORT = "arlptgoDuznchHAXvWxSiPOJmsE"
     SAFE_LONG = (
@@ -716,14 +717,14 @@ class RcloneFlags(FlagSet):
     TOOL = TOOL_RCLONE
     DEFAULTS = DEFAULT_RCLONE_OPTS
     CHOICES = [
-        ("u", "--update", "skip files that are newer on the target (safety net)", False),
-        ("n", "--dry-run", "show what would happen, change nothing", False),
-        ("l", "--links", "upload symlinks as .rclonelink files (restorable)", False),
-        ("c", "--checksum", "compare by checksum, not size + time (slow)", False),
-        ("M", "--metadata", "keep permissions/owners (only some backends)", False),
-        (None, "--ignore-existing", "never touch files that exist on the target", False),
-        ("L", "--copy-links", "follow symlinks, copy what they point to", True),
-        ("I", "--ignore-times", "copy every file again, overwriting the target", True),
+        ("u", "--update", "Skip files that are newer on the target (safety net)", False),
+        ("n", "--dry-run", "Show what would happen, change nothing", False),
+        ("l", "--links", "Upload symlinks as .rclonelink files (restorable)", False),
+        ("c", "--checksum", "Compare by checksum, not size + time (slow)", False),
+        ("M", "--metadata", "Keep permissions/owners (only some backends)", False),
+        (None, "--ignore-existing", "Never touch files that exist on the target", False),
+        ("L", "--copy-links", "Follow symlinks, copy what they point to", True),
+        ("I", "--ignore-times", "Copy every file again, overwriting the target", True),
     ]
     SAFE_SHORT = "unlcM"
     SAFE_LONG = (
@@ -3271,26 +3272,26 @@ HELP_TEXT = [
     "mcrsync - Midnight-Commander-style rsync queue manager",
     "",
     "GLOBAL KEYS (work in every view)",
-    "  ?  or  H        show this help (press again / Esc to close)",
-    "  T               toggle between NAV view and QUEUE editor view",
-    "  V               open/close the VERIFY view",
-    "  G               open/close the RUN LOG: every copied/created/deleted",
-    "                  file, conflict, error and connection event of this",
-    "                  session, with times. It follows new lines; scroll",
-    "                  with Up/Down/PgUp/PgDn/Home, End follows again.",
-    "                  Keeps the last 5000 lines (not saved to disk).",
-    "  S               save the current queue (+ rsync options) to a file",
-    "                  (asks before overwriting an existing file)",
-    "  L               load a queue (+ rsync options) from a file. If the",
-    "                  file's rsync flags differ from yours, they are shown",
-    "                  in full and you choose whether to use them. Not",
-    "                  possible while a run is in progress.",
-    "  F8              open the rsync-options review screen, then run the queue",
-    "  P               pause / resume queue execution (takes effect between",
-    "                  items, not mid-transfer - rsync itself can't be paused",
-    "                  mid-file). If the run paused because an SSH",
-    "                  connection was lost, P logs in again first.",
-    "  Q               quit (asks for confirmation)",
+    "  ? or H  Show this help",
+    "  T       Toggle between NAV view and QUEUE editor view",
+    "  V       Open/close the VERIFY view",
+    "  G       Open/close the RUN LOG: every copied/created/deleted",
+    "          file, conflict, error and connection event of this",
+    "          session, with times. It follows new lines; scroll",
+    "          with Up/Down/PgUp/PgDn/Home, End follows again.",
+    "          Keeps the last 5000 lines (not saved to disk).",
+    "  S       Save the current queue (+ rsync options) to a file",
+    "          (asks before overwriting an existing file)",
+    "  L       Load a queue (+ rsync options) from a file. If the",
+    "          file's rsync flags differ from yours, they are shown",
+    "          in full and you choose whether to use them. Not",
+    "          possible while a run is in progress.",
+    "  F8      Open the rsync-options review screen, then run the queue",
+    "  P       Pause / resume queue execution (takes effect between",
+    "          items, not mid-transfer - rsync itself can't be paused",
+    "          mid-file). If the run paused because an SSH",
+    "          connection was lost, P logs in again first.",
+    "  Q       Quit (asks for confirmation)",
     "",
     "TYPING TEXT (all popups and prompts)",
     "  Fields start with the current value (e.g. the rsync flags or",
@@ -3308,36 +3309,37 @@ HELP_TEXT = [
     "",
     "NAVIGATE VIEW (left = SOURCE pane, right = TARGET pane, bottom = last",
     "5 queued items)",
-    "  Tab             switch active pane between SOURCE (left) and",
+    "  Tab             Switch active pane between SOURCE (left) and",
     "                  TARGET (right)",
-    "  Up / Down       move selection within the active pane",
-    "  Left            go to the parent directory of the active pane",
-    "  Right / Enter   enter the highlighted directory",
-    "  PgUp / PgDn     scroll a full page within the active pane",
-    "  F5              refresh both panes from disk (in case files changed",
+    "  Up / Down       Move selection within the active pane",
+    "  Left / Bksp     Go to the parent directory of the active pane",
+    "  Right / Enter   Enter the highlighted directory",
+    "  PgUp / PgDn     Scroll a full page within the active pane",
+    "  Home / End      Jump to the first / last item in the active pane",
+    "  F5              Refresh both panes from disk (in case files changed",
     "                  outside mcrsync). Selection is kept if the same",
     "                  name still exists. This also happens automatically",
     "                  once a full queue run finishes. On a remote pane",
     "                  whose connection was lost, F5 offers to reconnect.",
-    "  C               queue a copy: selected item in the LEFT (source)",
+    "  C               Queue a copy: selected item in the LEFT (source)",
     "                  pane -> current directory shown in the RIGHT",
     "                  (target) pane. Only works when the LEFT pane is",
     "                  active - if you press C while the RIGHT pane is",
     "                  active the screen will flash twice and nothing",
     "                  is queued.",
-    "  F2              rename the selected file/folder (in either pane).",
+    "  F2              Rename the selected file/folder (in either pane).",
     "                  Opens a popup: type the new name, then Tab to move",
     "                  between the text field, [OK], and [Cancel]. Enter",
     "                  activates whichever is focused (so Enter in the",
     "                  text field = OK). Esc always cancels. If a file",
     "                  or folder with the new name already exists, the",
     "                  rename is refused rather than overwriting it.",
-    "  Insert          create a new folder in the active pane's current",
+    "  Insert          Create a new folder in the active pane's current",
     "                  directory (in either pane). Same popup style as",
     "                  rename: type the name, OK/Cancel/Tab/Enter/Esc.",
     "                  Refuses to create it if something with that name",
     "                  already exists.",
-    "  O               connect the active pane to a remote host over SSH or",
+    "  O               Connect the active pane to a remote host over SSH or",
     "                  to an rclone remote (you choose which), or - if it",
     "                  already is remote - disconnect it and go back to the",
     "                  local folder it showed before.",
@@ -3349,12 +3351,12 @@ HELP_TEXT = [
     "  can't copy directly between two remote hosts.",
     "",
     "  Pressing O and choosing SSH opens a form:",
-    "    User          login name on the remote host",
-    "    Host          host name or IPv4 address (IPv6 isn't supported)",
+    "    User          Login name on the remote host",
+    "    Host          Host name or IPv4 address (IPv6 isn't supported)",
     "    Port          SSH port, normally 22",
-    "    Base path     folder the pane starts in; blank or ~ = home",
+    "    Base path     Folder the pane starts in; blank or ~ = home",
     "                  directory. You can still go above it with Left.",
-    "    Key file      private key file (e.g. ~/.ssh/id_ed25519). Leave it",
+    "    Key file      Private key file (e.g. ~/.ssh/id_ed25519). Leave it",
     "                  blank to log in with a password.",
     "  The values you enter are remembered (never the password) in",
     "  ~/.mcrsync.yaml and pre-filled next time.",
@@ -3371,8 +3373,8 @@ HELP_TEXT = [
     "  is needed on the remote host (rsync 3.1 or newer).",
     "",
     "  If the connection is lost:",
-    "    - in a pane: it shows the error; press F5 to reconnect.",
-    "    - during a run: the run pauses before the next item and the",
+    "    - In a pane: it shows the error; press F5 to reconnect.",
+    "    - During a run: the run pauses before the next item and the",
     "      status bar says so. Press P to log in again; the interrupted",
     "      item is then retried from the start (rsync skips what was",
     "      already copied).",
@@ -3426,9 +3428,9 @@ HELP_TEXT = [
     "  storage in other ways (e.g. a crypt remote) can't be detected.",
     "",
     "QUEUE EDITOR VIEW (single pane: size, files, #, source, dest, status)",
-    "  Up / Down       move selection",
-    "  PgUp / PgDn     scroll a full page",
-    "  D  or  Delete   remove the selected item from the queue (confirms).",
+    "  Up / Down       Move selection",
+    "  PgUp / PgDn     Scroll a full page",
+    "  D  or  Delete   Remove the selected item from the queue (confirms).",
     "                  If a background size estimate was still being",
     "                  calculated for that item, it's cancelled right away.",
     "",
@@ -3437,9 +3439,9 @@ HELP_TEXT = [
     "  already exists on the target or not (symlinks count as links, not",
     "  as what they point to). Computed in the background so it never",
     "  blocks the UI; the live progress line measures against it:",
-    "    ...      still being estimated - check back in a moment",
-    "    nan      size couldn't be determined (e.g. permission error)",
-    "    offline  remote source that isn't connected yet - estimated",
+    "    ...      Still being estimated - check back in a moment",
+    "    nan      Size couldn't be determined (e.g. permission error)",
+    "    offline  Remote source that isn't connected yet - estimated",
     "             once you connect (F8 or O)",
     "",
     "  The status bar's far right shows overall progress in this view, and",
@@ -3452,17 +3454,17 @@ HELP_TEXT = [
     "  every remaining item's size estimate is known.",
     "",
     "  Status values you'll see in the queue and bottom-tail list:",
-    "    NOT SYNCED    queued, not yet attempted",
-    "    IN PROGRESS   currently being copied",
-    "    SYNCED OK     completed cleanly",
+    "    NOT SYNCED    Queued, not yet attempted",
+    "    IN PROGRESS   Currently being copied",
+    "    SYNCED OK     Completed cleanly",
     "    SYNC FAIL     rsync or rclone returned a hard error",
-    "    INCOMPLETE    copy ran, but some files were skipped because the",
+    "    INCOMPLETE    Copy ran, but some files were skipped because the",
     "                  target copy was newer than the source (needs your",
     "                  attention in the Verify view)",
-    "    DRY RUN OK    a dry run (-n) found nothing wrong. Nothing was",
+    "    DRY RUN OK    A dry run (-n) found nothing wrong. Nothing was",
     "                  copied, so a real run will still process it.",
     "    DRY RUN INCOMPLETE",
-    "                  a dry run found files that are newer in the target",
+    "                  A dry run found files that are newer in the target",
     "                  (listed in Verify -> SKIPPED, but can't be resolved",
     "                  until a real run)",
     "",
@@ -3470,22 +3472,22 @@ HELP_TEXT = [
     "  rsync and rclone each have their own flags, and each set applies to",
     "  every queue item copied with that tool. Only the tools the queue",
     "  uses are shown.",
-    "  Up / Down       move through the flag checkboxes",
-    "  Space           switch the selected flag on/off. Flags without a",
+    "  Up / Down       Move through the flag checkboxes",
+    "  Space           Switch the selected flag on/off. Flags without a",
     "                  checkbox (e.g. --exclude=...) are listed under",
     "                  'Other flags' and kept as they are.",
-    "  E               edit all flags of the selected tool as a free-form",
+    "  E               Edit all flags of the selected tool as a free-form",
     "                  string (shell-style quoting is respected). Values",
     "                  must be attached with '=' (--exclude='*.tmp'): a",
     "                  separate word would be one more path to copy.",
-    "  D               restore the selected tool's built-in defaults",
+    "  D               Restore the selected tool's built-in defaults",
     "                  (rsync: -a -u --stats --itemize-changes,",
     "                  rclone: --update --links)",
-    "  Enter           confirm and start the run. If -u/--update is not",
+    "  Enter           Confirm and start the run. If -u/--update is not",
     "                  in the flags you'll get an extra confirmation,",
     "                  because that flag is what protects newer target",
     "                  files from being overwritten.",
-    "  Esc             cancel, go back without starting anything",
+    "  Esc             Cancel, go back without starting anything",
     "",
     "  Below the checkboxes is the exact command the first item of each",
     "  tool will get - the other items differ only in their paths.",
@@ -3513,14 +3515,14 @@ HELP_TEXT = [
     "  newer; they are counted as files and shown as 'N conflicts').",
     "  'copied' is what was actually transferred.",
     "  Phases of each item:",
-    "    preparing   checking the target, creating its folder",
+    "    preparing   Checking the target, creating its folder",
     "    scanning    rsync builds the file list - on big folders over SSH",
     "                this can take minutes before anything is copied",
-    "    copying     files are being checked and transferred; 'now:' is",
+    "    copying     Files are being checked and transferred; 'now:' is",
     "                the file being copied",
     "    deleting    (red) only with --delete... flags: rsync is removing",
     "                files from the target",
-    "    finishing   all files checked; rsync sets folder times and",
+    "    finishing   All files checked; rsync sets folder times and",
     "                writes its statistics",
     "  A dry run shows 'DRY RUN' and 'would copy'.",
     "",
@@ -3531,23 +3533,23 @@ HELP_TEXT = [
     "  -n and press F8 again to do the real copy.",
     "",
     "VERIFY VIEW (reviewing what happened after a run)",
-    "  Tab             cycle through tabs: COPIED / SKIPPED / RENAMED /",
+    "  Tab             Cycle through tabs: COPIED / SKIPPED / RENAMED /",
     "                  ERRORS",
-    "  Up / Down       move selection",
-    "  PgUp / PgDn     scroll a full page",
-    "  Enter           on a row in the SKIPPED tab, resolve that",
+    "  Up / Down       Move selection",
+    "  PgUp / PgDn     Scroll a full page",
+    "  Enter           On a row in the SKIPPED tab, resolve that",
     "                  conflicting file: choose Skip / Rename existing /",
     "                  Autorename incoming. Once every conflict on an",
     "                  item is resolved it flips back to SYNCED OK.",
-    "  Esc  or  V      back to the previous view",
+    "  Esc  or  V      Back to the previous view",
     "",
     "  Tab meanings:",
-    "    COPIED        files rsync actually transferred",
-    "    SKIPPED       unresolved conflicts (target was newer than",
+    "    COPIED        Files rsync actually transferred",
+    "    SKIPPED       Unresolved conflicts (target was newer than",
     "                  source) - these need you to pick a resolution",
-    "    RENAMED       conflicts you've already resolved with Rename or",
+    "    RENAMED       Conflicts you've already resolved with Rename or",
     "                  Autorename, and what they were renamed to",
-    "    ERRORS        hard failures (rsync or rclone errors, skipped",
+    "    ERRORS        Hard failures (rsync or rclone errors, skipped",
     "                  symlinks, etc.)",
     "",
     "SAFETY NOTES",
@@ -3591,18 +3593,20 @@ HELP_TEXT = [
     "Press Esc, H, or ? to close this help.",
 ]
 
-# HELP_TEXT key column: keys at column 2, description at column 18
-HELP_KEY_LINE_RE = re.compile(r"^  \S.{13}  \S")
+# HELP_TEXT key column: keys at column 2 (up to 14 chars), then 2+ spaces and
+# the description
+HELP_KEY_LINE_RE = re.compile(r"^  (\S(?:.{0,12}\S)?) {2,}\S")
 # status bar hints: "key:label" separated by two spaces
 HINT_KEY_RE = re.compile(r"(?:^|  )([^ :]+):")
 
 
 def help_key_spans(line):
     """(start, end) of each key in a HELP_TEXT line's key column."""
-    if not HELP_KEY_LINE_RE.match(line):
+    m = HELP_KEY_LINE_RE.match(line)
+    if not m:
         return []
-    return [m.span() for m in re.finditer(r"[^ ]+", line[:16])
-            if m.group() not in ("or", "/")]
+    return [k.span() for k in re.finditer(r"[^ ]+", line[:m.end(1)])
+            if k.group() not in ("or", "/")]
 
 VERIFY_TABS = ["COPIED", "SKIPPED", "RENAMED", "ERRORS"]
 
@@ -3656,15 +3660,23 @@ class App(object):
 
         curses.curs_set(0)
         curses.use_default_colors()
+        self.inactive_frame_attr = curses.A_DIM
         try:
             curses.start_color()
-            curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)   # active pane hdr
+            # Bright variants when available; bold black would render as gray
+            bright = curses.COLORS >= 16
+            active_bg = curses.COLOR_WHITE + 8 if bright else curses.COLOR_WHITE
+            curses.init_pair(1, curses.COLOR_BLACK, active_bg)            # active pane hdr
             curses.init_pair(2, curses.COLOR_YELLOW, -1)                  # dirs
             curses.init_pair(3, curses.COLOR_GREEN, -1)                   # OK
             curses.init_pair(4, curses.COLOR_RED, -1)                     # FAIL
             curses.init_pair(5, curses.COLOR_MAGENTA, -1)                 # INCOMPLETE
             curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)    # header bar
             curses.init_pair(7, curses.COLOR_CYAN, -1)                    # DRY RUN OK
+            curses.init_pair(8, active_bg, -1)                            # active pane frame
+            if bright:
+                curses.init_pair(9, curses.COLOR_BLACK + 8, -1)           # inactive pane frame
+                self.inactive_frame_attr = curses.color_pair(9)
         except curses.error:
             pass
 
@@ -4368,11 +4380,13 @@ class App(object):
 
     def draw_pane(self, win, pane, title, active):
         win.erase()
+        frame_attr = curses.color_pair(8) | curses.A_BOLD if active else self.inactive_frame_attr
+        win.attron(frame_attr)
         win.border()
+        win.attroff(frame_attr)
         h, w = win.getmaxyx()
-        hdr_attr = curses.color_pair(1) if active else 0
-        safe_addstr(win, 0, 2, " {0} [{1}] ".format(title, pane.fs.label()),
-                    hdr_attr | curses.A_BOLD)
+        hdr_attr = curses.color_pair(1) if active else curses.A_BOLD
+        safe_addstr(win, 0, 2, " {0} [{1}] ".format(title, pane.fs.label()), hdr_attr)
         safe_addstr(win, 1, 2, pane.fs.display_path(pane.path)[:w - 4], curses.A_DIM)
         page_h = h - 3
         for i in range(page_h):
@@ -4380,7 +4394,7 @@ class App(object):
             if idx >= len(pane.entries):
                 break
             name, isdir = pane.entries[idx]
-            label = ("/" + name) if isdir else ("  " + name)
+            label = ("/" + name) if isdir else (" " + name)
             attr = 0
             if isdir:
                 attr = curses.color_pair(2)
@@ -4632,7 +4646,7 @@ class App(object):
             opts = self.opts_for(tool)
             tail.append((2, "", 0))
             others = " ".join(shlex.quote(o) for o in flags.others(opts)) or "(none)"
-            for i, line in enumerate(textwrap.wrap("{0} - other flags: {1}".format(tool, others),
+            for i, line in enumerate(textwrap.wrap("{0} - Other flags: {1}".format(tool, others),
                                                    text_w, break_on_hyphens=False)):
                 tail.append((2 if i == 0 else 4, line, 0))
             idx, cmd = self.options_preview_cmd(tool)
@@ -4644,7 +4658,7 @@ class App(object):
             warnings = []
             problem = flags.problems(opts)
             if problem:
-                warnings.append(("CAN'T RUN: " + problem, red))
+                warnings.append(("CAN'T RUN: " + problem[:1].upper() + problem[1:], red))
             risky = flags.risky(opts)
             if risky:
                 warnings.append(("CAUTION: these {0} flags can delete or overwrite data, write "
@@ -4657,6 +4671,7 @@ class App(object):
                                      tool, " ".join(unchecked)),
                                  curses.color_pair(5) | curses.A_BOLD))
             if tool == TOOL_RCLONE and flags.has(opts, "l", "--links"):
+                warnings.append(("", 0))
                 warnings.append(("Note: -l/--links is left out for copies INTO a local folder - "
                                  "symlinks from a remote stay .rclonelink files there, so they "
                                  "can't point outside the target.", 0))
@@ -4674,6 +4689,8 @@ class App(object):
                                      "may be overwritten or reported as conflicts "
                                      "wrongly.".format(key), red))
             for text, attr in warnings:
+                if not text:
+                    tail.append((2, "", 0))
                 for i, line in enumerate(textwrap.wrap(text, text_w, break_on_hyphens=False)):
                     tail.append((2 if i == 0 else 4, line, attr))
         return tail
@@ -4727,8 +4744,8 @@ class App(object):
             y += 1
 
         safe_addstr(win, h - 3, 2,
-                    "[Space] toggle   [E] edit as text   [D] defaults   "
-                    "[Enter] confirm & run   [Esc] cancel", curses.A_BOLD)
+                    "[Space] Toggle   [E] Edit as text   [D] Defaults   "
+                    "[Enter] Confirm & run   [Esc] Cancel", curses.A_BOLD)
         win.noutrefresh()
 
     def options_preview_cmd(self, tool):
@@ -4957,7 +4974,11 @@ class App(object):
             pane.move(-page_h, page_h)
         elif c == curses.KEY_NPAGE:
             pane.move(page_h, page_h)
-        elif c == curses.KEY_LEFT:
+        elif c == curses.KEY_HOME:
+            pane.move(-len(pane.entries), page_h)
+        elif c == curses.KEY_END:
+            pane.move(len(pane.entries), page_h)
+        elif c in (curses.KEY_LEFT, curses.KEY_BACKSPACE, 127, 8):
             pane.go_parent()
         elif c == curses.KEY_RIGHT or c in (10, 13):
             pane.enter()
