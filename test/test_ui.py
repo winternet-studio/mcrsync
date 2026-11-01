@@ -98,8 +98,13 @@ class UiTest(unittest.TestCase):
             f.write('last_remote:\n  user: {0}\n  host: {1}\n  port: {2}\n'
                     '  base_path: "~/ui"\n  keyfile: "{3}"\n'.format(user, HOST, PORT, keyfile))
 
+    def choose_ssh(self):
+        self.wait_for("Connect this pane to:")
+        self.keys("Enter")
+
     def connect_with_password(self):
         self.keys("o")
+        self.choose_ssh()
         self.wait_for("Connect TARGET pane via SSH")
         for _ in range(5):
             self.keys("Enter", delay=0.3)
@@ -129,6 +134,7 @@ class UiTest(unittest.TestCase):
     def test_form_validation(self):
         self.start()
         self.keys("o")
+        self.choose_ssh()
         self.wait_for("Connect SOURCE pane via SSH")
         for _ in range(4):
             self.keys("BSpace", delay=0.1)
@@ -154,7 +160,7 @@ class UiTest(unittest.TestCase):
         self.keys("Tab")
         self.keys("c")
         self.keys("F8")
-        self.wait_for("RSYNC OPTIONS")
+        self.wait_for("RUN OPTIONS")
         self.keys("Enter")
         self.wait_for("[SYNCED OK]")
         self.assertIn("{0}:/home/pwuser/ui/photos".format(HOST), self.screen())
@@ -183,7 +189,7 @@ class UiTest(unittest.TestCase):
         self.wait_for("[IN PROGRESS]")
         sh("for s in /tmp/mcrsync-*/*.sock; do ssh -S $s -O exit -p {0} pwuser@{1}; done"
            .format(PORT, HOST))
-        s = self.wait_for("connection lost, press p")
+        s = self.wait_for("connection lost, press P")
         self.assertIn("[NOT SYNCED]", s)
         self.keys("p")
         self.wait_for("password:")
@@ -201,6 +207,7 @@ class UiTest(unittest.TestCase):
         self.write_settings("keyuser", KEYFILE)
         self.start()
         self.keys("o")
+        self.choose_ssh()
         self.wait_for("Connect SOURCE pane via SSH")
         for _ in range(5):
             self.keys("Enter", delay=0.3)
@@ -281,7 +288,7 @@ class UiTest(unittest.TestCase):
         self.wait_for("Loaded 1 item(s)")
         self.keys("Enter")
         self.keys("F8")
-        s = self.wait_for("RSYNC OPTIONS")
+        s = self.wait_for("RUN OPTIONS")
         self.assertNotIn("--remove-source-files", s)
         self.assertNotIn("CAUTION", s)
         # checkboxes: toggling -n (3rd) shows up in the command preview
@@ -418,7 +425,7 @@ class UiTest(unittest.TestCase):
         self.wait_for("rsync flags:")
         self.type(" --delete")
         self.keys("Escape")
-        s = self.wait_for("RSYNC OPTIONS")
+        s = self.wait_for("RUN OPTIONS")
         self.assertNotIn("--delete", s.split("Command for item")[1])
         # pre-filled flags can be extended instead of retyped
         self.keys("e")
@@ -520,6 +527,7 @@ class UiTest(unittest.TestCase):
         before = set(glob.glob("/tmp/mcrsync-*/*.sock"))
         self.start()
         self.keys("o")
+        self.choose_ssh()
         for _ in range(5):
             self.keys("Enter", delay=0.3)
         self.wait_for("SOURCE [ssh keyuser@")

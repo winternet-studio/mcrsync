@@ -7,7 +7,9 @@ Targets Python 3.4 (Synology chroot). Avoids f-strings, subprocess.run,
 os.scandir and other 3.5+-only features on purpose.
 
 Either pane can be switched to a remote SSH host (key 'o'); rsync then runs
-over a shared ssh ControlMaster connection. See HELP_TEXT for details.
+over a shared ssh ControlMaster connection. A pane can also show an rclone
+remote (cloud/object storage from the user's own rclone config); items
+involving one are copied with rclone instead of rsync. See HELP_TEXT.
 
 Views:
   NAV    - left (source) / right (target) file panes + last-5 queue tail
@@ -18,21 +20,21 @@ Keys (NAV + QUEUE unless noted):
   Tab        toggle left/right pane        (NAV only)
   Left       go to parent dir              (NAV only)
   Right/Ent  enter directory                (NAV only)
-  o          connect active pane to an SSH host / disconnect it (NAV only)
-  c          queue copy of selected item in LEFT pane -> current RIGHT dir
-  t          toggle NAV <-> QUEUE view
-  v          open VERIFY view (after a run, or to inspect last run)
-  s          save queue to a .json file
-  l          load queue from a .json file
+  O          connect active pane to SSH / rclone, or disconnect it (NAV only)
+  C          queue copy of selected item in LEFT pane -> current RIGHT dir
+  T          toggle NAV <-> QUEUE view
+  V          open VERIFY view (after a run, or to inspect last run)
+  S          save queue to a .json file
+  L          load queue from a .json file
   F8         execute the queue
-  p          pause / resume execution
+  P          pause / resume execution
   PgUp/PgDn  scroll active pane / list
-  q          quit (confirm)
+  Q          quit (confirm)
 
 In VERIFY view:
   Tab        cycle COPIED / SKIPPED / RENAMED / ERRORS
   Enter      (on a SKIPPED "conflict" row) resolve: Skip / Rename / Autorename
-  Esc / v    back to previous view
+  Esc / V    back to previous view
 """
 
 import curses
@@ -56,6 +58,10 @@ import queue as pyqueue
 from collections import OrderedDict
 
 DEFAULT_RSYNC_OPTS = ["-a", "-u", "--stats", "--itemize-changes"]
+DEFAULT_RCLONE_OPTS = ["--update", "--links"]
+
+TOOL_RSYNC = "rsync"
+TOOL_RCLONE = "rclone"
 
 # ----------------------------------------------------------------------
 # Data model
@@ -97,6 +103,8 @@ class ConnSpec(object):
 
     # \Z, not $: $ also matches before a trailing newline
     NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*\Z")
+    kind = "ssh"
+    tool = TOOL_RSYNC
 
     def __init__(self, user, host, port=22, keyfile=""):
         if not isinstance(user, str) or not ConnSpec.NAME_RE.match(user):
@@ -145,6 +153,7 @@ class ConnSpec(object):
 
     def to_dict(self):
         return {
+            "type": "ssh",
             "user": self.user,
             "host": self.host,
             "port": self.port,
@@ -156,6 +165,55 @@ class ConnSpec(object):
         if not d:
             return None
         return ConnSpec(d["user"], d["host"], d.get("port", 22), d.get("keyfile", ""))
+
+
+class RcloneSpec(object):
+    """Identifies a remote from the user's own rclone config, by name only:
+    mcrsync never reads or stores its credentials.
+
+    The name ends up in front of a ':' on rclone's command line, so it is
+    restricted to characters that can't make it an option ('-' first), a
+    connection string (',', '=') or a path."""
+
+    NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\Z")
+    kind = "rclone"
+    tool = TOOL_RCLONE
+
+    def __init__(self, remote):
+        if not isinstance(remote, str) or not RcloneSpec.NAME_RE.match(remote):
+            raise ValueError("invalid rclone remote name {0!r} (letters, digits, _ - only)".format(
+                remote))
+        self.remote = remote
+
+    def key(self):
+        return "rclone:" + self.remote
+
+    def display_path(self, path):
+        return "{0}:{1}".format(self.remote, path)
+
+    def arg(self, path):
+        """rclone's 'remote:path' argument. Paths are kept absolute ('/'
+        first) - local and sftp backends would read anything else relative
+        to the current or home directory."""
+        return "{0}:{1}".format(self.remote, path)
+
+    def to_dict(self):
+        return {"type": "rclone", "remote": self.remote}
+
+
+def conn_from_dict(d):
+    """ConnSpec / RcloneSpec / None from a queue file. Entries without a
+    type are SSH (queue files written before rclone support)."""
+    if not d:
+        return None
+    if not isinstance(d, dict):
+        raise ValueError("invalid connection in queue: {0!r}".format(d))
+    kind = d.get("type", "ssh")
+    if kind == "ssh":
+        return ConnSpec.from_dict(d)
+    if kind == "rclone":
+        return RcloneSpec(d["remote"])
+    raise ValueError("unknown connection type in queue: {0!r}".format(kind))
 
 
 def format_size_si(n_bytes):
@@ -248,6 +306,12 @@ class QueueItem(object):
     def conn_specs(self):
         return [s for s in (self.src_conn, self.dst_conn) if s is not None]
 
+    def tool(self):
+        """rclone if either side is an rclone remote, else rsync."""
+        if any(s.tool == TOOL_RCLONE for s in self.conn_specs()):
+            return TOOL_RCLONE
+        return TOOL_RSYNC
+
     def src_display(self, path=None):
         path = self.src if path is None else path
         return self.src_conn.display_path(path) if self.src_conn else path
@@ -283,9 +347,14 @@ class QueueItem(object):
         QueueItem.check_path(d["dst"])
         if not isinstance(d.get("is_dir", True), bool):
             raise ValueError("invalid is_dir in queue: {0!r}".format(d.get("is_dir")))
-        it = QueueItem(d["src"], d["dst"], d.get("is_dir", True),
-                       ConnSpec.from_dict(d.get("src_conn")),
-                       ConnSpec.from_dict(d.get("dst_conn")))
+        src_conn = conn_from_dict(d.get("src_conn"))
+        dst_conn = conn_from_dict(d.get("dst_conn"))
+        # the same combinations the UI allows - see App.pane_conflict
+        kinds = sorted(s.kind for s in (src_conn, dst_conn) if s is not None)
+        if kinds in (["ssh", "ssh"], ["rclone", "ssh"]):
+            raise ValueError("invalid item in queue: {0} can't be combined".format(
+                " and ".join(kinds)))
+        it = QueueItem(d["src"], d["dst"], d.get("is_dir", True), src_conn, dst_conn)
         it.status = d.get("status", STATUS_PENDING)
         # never resume as "in progress", and a dry run copied nothing
         if it.status in (STATUS_RUNNING, STATUS_DRY_OK, STATUS_DRY_INCOMPLETE):
@@ -472,13 +541,133 @@ class Settings(object):
 # rsync option helpers
 # ----------------------------------------------------------------------
 
-class RsyncFlags(object):
-    """Flag checks on the user-editable rsync option list. Short flags are
-    also found inside combined clusters like '-avu'."""
+class FlagSet(object):
+    """Flag checks on a user-editable option list (rsync's or rclone's).
+    Short flags are also found inside combined clusters like '-avu'."""
 
     SHORT_CLUSTER_RE = re.compile(r"^-[A-Za-z]+$")
-
+    TOOL = ""
+    DEFAULTS = []
     # Checkboxes on the F8 screen: (short or None, long, description, risky)
+    CHOICES = []
+
+    @classmethod
+    def has(cls, opts, short, long_name):
+        for o in opts:
+            if o == long_name:
+                return True
+            if short and cls.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
+                return True
+        return False
+
+    @classmethod
+    def without(cls, opts, short, long_name):
+        out = []
+        for o in opts:
+            if o == long_name:
+                continue
+            if short and cls.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
+                o = "-" + o[1:].replace(short, "")
+                if o == "-":
+                    continue
+            out.append(o)
+        return out
+
+    @classmethod
+    def is_dry_run(cls, opts):
+        return cls.has(opts, "n", "--dry-run")
+
+    @classmethod
+    def has_update(cls, opts):
+        return cls.has(opts, "u", "--update")
+
+    @classmethod
+    def toggle(cls, opts, choice):
+        short, long_name = choice[0], choice[1]
+        if cls.has(opts, short, long_name):
+            return cls.without(opts, short, long_name)
+        return list(opts) + ["-" + short if short else long_name]
+
+    @classmethod
+    def others(cls, opts):
+        """The flags no checkbox covers."""
+        for choice in cls.CHOICES:
+            opts = cls.without(opts, choice[0], choice[1])
+        return opts
+
+    # Classification, filled by the subclasses. Long names without '='.
+    SAFE_LONG = ()          # known to be harmless for mcrsync's copies
+    SAFE_SHORT = ""         # short flags without a value
+    RISKY_LONG = ()         # delete, overwrite, write elsewhere, run commands
+    RISKY_PREFIXES = ()
+    RISKY_SHORT = ""
+    # Path-valued flags: harmless with a path inside the target, risky with
+    # an absolute one or '..' (written elsewhere).
+    PATH_LONG = ()
+
+    @classmethod
+    def _parse(cls, o):
+        """(long name or None, short letters) of a token. For '-T/tmp' or
+        '-aT/x' the letters are 'T' / 'aT': a short flag's value follows it
+        directly, so a letter run may include value letters - which only
+        makes the checks more cautious."""
+        if o.startswith("--"):
+            return o.split("=", 1)[0], ""
+        m = re.match(r"-([A-Za-z]+)", o)
+        return None, (m.group(1) if m else "")
+
+    @classmethod
+    def is_risky(cls, o):
+        name, letters = cls._parse(o)
+        if name is None:
+            return any(ch in cls.RISKY_SHORT for ch in letters)
+        if name in cls.PATH_LONG:
+            value = o.split("=", 1)[1] if "=" in o else ""
+            return value.startswith(("/", "~")) or ".." in value.split("/")
+        return (name in cls.RISKY_LONG or name.startswith(cls.RISKY_PREFIXES) or
+                name.endswith("-command"))
+
+    @classmethod
+    def risky(cls, opts):
+        """Flags that delete or overwrite data, write outside the target,
+        or run other commands."""
+        return [o for o in opts if cls.is_risky(o)]
+
+    @classmethod
+    def unchecked(cls, opts):
+        """Flags mcrsync knows neither as harmless nor as risky. They can
+        do anything (e.g. a backend flag can change where data goes), so
+        they are pointed out wherever flags are shown."""
+        out = []
+        for o in opts:
+            if cls.is_risky(o):
+                continue
+            name, letters = cls._parse(o)
+            if name is not None:
+                known = name in cls.SAFE_LONG or name in cls.PATH_LONG
+            else:
+                known = (cls.SHORT_CLUSTER_RE.match(o) is not None and
+                         all(ch in cls.SAFE_SHORT for ch in letters))
+            if not known:
+                out.append(o)
+        return out
+
+    @classmethod
+    def problems(cls, opts):
+        """Text saying why opts can't be used at all, or "". A token that
+        isn't a flag would be taken as an extra path - e.g. one more
+        source to copy."""
+        bad = [o for o in opts if not o.startswith("-") or o in ("-", "--")]
+        if bad:
+            return ("every flag must start with '-' and have its value attached with '=' "
+                    "(e.g. --exclude='*.tmp') - not usable: " +
+                    " ".join(shlex.quote(o) for o in bad))
+        return ""
+
+
+class RsyncFlags(FlagSet):
+    TOOL = TOOL_RSYNC
+    DEFAULTS = DEFAULT_RSYNC_OPTS
     CHOICES = [
         ("a", "--archive", "archive mode (recurse, perms, times, links, ...)", False),
         ("u", "--update", "skip files that are newer on the target (safety net)", False),
@@ -493,63 +682,95 @@ class RsyncFlags(object):
         (None, "--itemize-changes", "per-file change list", False),
         (None, "--delete", "delete target files that aren't in the source", True),
     ]
+    SAFE_SHORT = "arlptgoDuznchHAXvWxSiPOJmsE"
+    SAFE_LONG = (
+        "--archive", "--recursive", "--links", "--perms", "--times", "--group", "--owner",
+        "--devices", "--specials", "--update", "--dry-run", "--compress", "--compress-level",
+        "--checksum", "--hard-links", "--acls", "--xattrs", "--partial", "--stats",
+        "--itemize-changes", "--whole-file", "--no-whole-file", "--no-perms", "--no-owner",
+        "--no-group", "--no-times", "--no-devices", "--no-specials", "--verbose",
+        "--human-readable", "--progress", "--exclude", "--include", "--filter",
+        "--exclude-from", "--include-from", "--cvs-exclude", "--bwlimit", "--timeout",
+        "--contimeout", "--size-only", "--ignore-existing", "--existing", "--one-file-system",
+        "--sparse", "--numeric-ids", "--chmod", "--modify-window", "--max-size", "--min-size",
+        "--prune-empty-dirs", "--no-inc-recursive", "--safe-links", "--munge-links",
+        "--omit-dir-times", "--omit-link-times", "--protect-args", "--no-motd", "--fuzzy",
+        "--executability", "--info", "--debug", "--checksum-choice", "--mkpath")
+    RISKY_LONG = (
+        "--del", "--remove-source-files", "--force", "--inplace", "--rsync-path", "--rsh",
+        "--ignore-times", "--backup", "--suffix", "--log-file", "--write-batch",
+        "--only-write-batch", "--read-batch", "--keep-dirlinks", "--copy-links",
+        "--copy-unsafe-links", "--remote-option", "--super")
+    RISKY_PREFIXES = ("--delete", "--append")
+    # e: remote shell, I: ignore times, K: write through target symlinks,
+    # L: follow source symlinks, M: remote options, T: temp dir, b: backups
+    RISKY_SHORT = "eIKLMTb"
+    PATH_LONG = ("--partial-dir", "--temp-dir", "--backup-dir")
 
-    @staticmethod
-    def has(opts, short, long_name):
-        for o in opts:
-            if o == long_name:
-                return True
-            if short and RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
-                return True
-        return False
 
-    @staticmethod
-    def without(opts, short, long_name):
-        out = []
-        for o in opts:
-            if o == long_name:
-                continue
-            if short and RsyncFlags.SHORT_CLUSTER_RE.match(o) and short in o[1:]:
-                o = "-" + o[1:].replace(short, "")
-                if o == "-":
-                    continue
-            out.append(o)
-        return out
+class RcloneFlags(FlagSet):
+    """mcrsync always runs 'rclone copy'/'copyto', which never delete from
+    the target; the risky flags are those that overwrite, move or delete
+    anyway, weaken the --update check, or run commands."""
 
-    @staticmethod
-    def risky(opts):
-        """Flags that delete or overwrite data, or run other commands."""
-        out = []
+    TOOL = TOOL_RCLONE
+    DEFAULTS = DEFAULT_RCLONE_OPTS
+    CHOICES = [
+        ("u", "--update", "skip files that are newer on the target (safety net)", False),
+        ("n", "--dry-run", "show what would happen, change nothing", False),
+        ("l", "--links", "upload symlinks as .rclonelink files (restorable)", False),
+        ("c", "--checksum", "compare by checksum, not size + time (slow)", False),
+        ("M", "--metadata", "keep permissions/owners (only some backends)", False),
+        (None, "--ignore-existing", "never touch files that exist on the target", False),
+        ("L", "--copy-links", "follow symlinks, copy what they point to", True),
+        ("I", "--ignore-times", "copy every file again, overwriting the target", True),
+    ]
+    SAFE_SHORT = "unlcM"
+    SAFE_LONG = (
+        "--update", "--dry-run", "--links", "--checksum", "--metadata", "--ignore-existing",
+        "--exclude", "--include", "--filter", "--exclude-from", "--include-from",
+        "--filter-from", "--files-from", "--files-from-raw", "--exclude-if-present",
+        "--bwlimit", "--transfers", "--checkers", "--retries", "--retries-sleep",
+        "--low-level-retries", "--contimeout", "--timeout", "--tpslimit", "--tpslimit-burst",
+        "--buffer-size", "--size-only", "--max-age", "--min-age", "--max-size", "--min-size",
+        "--max-depth", "--fast-list", "--no-traverse", "--create-empty-src-dirs",
+        "--order-by", "--immutable", "--multi-thread-streams", "--multi-thread-cutoff",
+        "--use-mmap", "--skip-links", "--one-file-system", "--check-first",
+        "--max-transfer", "--cutoff-mode", "--ignore-case")
+    # (names ending in -command, which run a program, are always risky)
+    RISKY_LONG = ("--ignore-times", "--copy-links", "--no-check-dest", "--backup-dir",
+                  "--suffix", "--compare-dest", "--copy-dest", "--track-renames",
+                  "--use-server-modtime", "--modify-window", "--config", "--rc", "--rc-addr",
+                  "--max-delete", "--inplace", "--metadata-mapper", "--ignore-size")
+    RISKY_PREFIXES = ("--delete",)
+    RISKY_SHORT = "IL"
+    # mcrsync reads rclone's JSON log from stderr: anything that moves,
+    # reformats or silences it would break progress and conflict detection.
+    OUTPUT_NAMES = ("--log-file", "--log-level", "--log-format", "--use-json-log",
+                    "--verbose", "--quiet", "--progress", "--stats", "--stats-one-line",
+                    "--stats-log-level", "--stats-unit", "--syslog", "--ask-password",
+                    "--interactive")
+    OUTPUT_SHORT = "vqPi"
+
+    @classmethod
+    def problems(cls, opts):
+        problem = super(RcloneFlags, cls).problems(opts)
+        if problem:
+            return problem
+        bad = []
         for o in opts:
             name = o.split("=", 1)[0]
-            if (name.startswith("--delete") or name.startswith("--append") or
-                    name in ("--del", "--remove-source-files", "--force", "--inplace",
-                             "--rsync-path", "--rsh") or
-                    (RsyncFlags.SHORT_CLUSTER_RE.match(o) and "e" in o[1:])):
-                out.append(o)
-        return out
+            if (name in cls.OUTPUT_NAMES or name.startswith("--stats") or
+                    (cls.SHORT_CLUSTER_RE.match(o) and
+                     any(ch in cls.OUTPUT_SHORT for ch in o[1:]))):
+                bad.append(o)
+        if bad:
+            return ("mcrsync sets rclone's logging and progress output itself - remove: " +
+                    " ".join(shlex.quote(o) for o in bad))
+        return ""
 
-    @staticmethod
-    def is_dry_run(opts):
-        return RsyncFlags.has(opts, "n", "--dry-run")
 
-    @staticmethod
-    def has_update(opts):
-        return RsyncFlags.has(opts, "u", "--update")
-
-    @staticmethod
-    def toggle(opts, choice):
-        short, long_name = choice[0], choice[1]
-        if RsyncFlags.has(opts, short, long_name):
-            return RsyncFlags.without(opts, short, long_name)
-        return list(opts) + ["-" + short if short else long_name]
-
-    @staticmethod
-    def others(opts):
-        """The flags no checkbox covers."""
-        for choice in RsyncFlags.CHOICES:
-            opts = RsyncFlags.without(opts, choice[0], choice[1])
-        return opts
+FLAG_SETS = {TOOL_RSYNC: RsyncFlags, TOOL_RCLONE: RcloneFlags}
 
 
 # ----------------------------------------------------------------------
@@ -577,9 +798,53 @@ class ConnectionLost(FsError):
     pass
 
 
-class LocalFs(object):
+class Fs(object):
+    """What panes, runners and conflict resolution need from a side of a
+    copy. Paths are always absolute in that side's own namespace.
+
+    exists/isdir/list_dir/size/... raise FsError (ConnectionLost when the
+    remote can't be reached at all); rename and mkdir never replace an
+    existing file or folder."""
+
     is_remote = False
-    spec = None
+    kind = "local"      # "local" | "ssh" | "rclone"
+    spec = None         # ConnSpec / RcloneSpec, None for local
+    pathmod = posixpath
+
+    def label(self):
+        raise NotImplementedError
+
+    def display_path(self, path):
+        raise NotImplementedError
+
+    def resolve(self, path):
+        raise NotImplementedError
+
+    def list_dir(self, path):
+        """Sorted list of (name, is_dir), dirs first."""
+        raise NotImplementedError
+
+    def exists(self, path):
+        raise NotImplementedError
+
+    def isdir(self, path):
+        raise NotImplementedError
+
+    def rename(self, old, new):
+        raise NotImplementedError
+
+    def mkdir(self, path):
+        raise NotImplementedError
+
+    def makedirs(self, path):
+        raise NotImplementedError
+
+    def size(self, path, is_dir, cancel_event):
+        """(bytes, regular files), or None if cancelled or unknown."""
+        raise NotImplementedError
+
+
+class LocalFs(Fs):
     pathmod = os.path
 
     def label(self):
@@ -589,6 +854,10 @@ class LocalFs(object):
         return path
 
     def rsync_arg(self, path):
+        return path
+
+    def rclone_arg(self, path):
+        # always absolute, so never read as an option or 'remote:path'
         return path
 
     def resolve(self, path):
@@ -822,12 +1091,12 @@ class SshConnection(object):
         return proc.returncode, out, os.fsdecode(err)
 
 
-class RemoteFs(object):
+class RemoteFs(Fs):
     """Filesystem operations on a remote host, using only POSIX sh, so it
     works on GNU/Linux as well as busybox (Synology) hosts."""
 
     is_remote = True
-    pathmod = posixpath
+    kind = "ssh"
 
     # Output that is parsed starts after MARKER, so text printed by the
     # remote user's shell startup files can't be mistaken for data.
@@ -984,13 +1253,359 @@ class RemoteFs(object):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class RcloneUnavailable(ConnectionLost):
+    """rclone gave up with an exit code that is worth retrying later
+    (network trouble, an expired login, a provider's daily limit)."""
+
+
+class RcloneCli(object):
+    """Runs the rclone binary. Never prompts: stdin is closed and
+    --ask-password=false makes an encrypted config fail instead of waiting
+    for a password (it works if RCLONE_CONFIG_PASS or
+    RCLONE_PASSWORD_COMMAND is set in mcrsync's environment)."""
+
+    BINARY = "rclone"
+    MIN_VERSION = (1, 60)
+    RUN_TIMEOUT = 120
+    VERSION_RE = re.compile(r"^rclone v(\d+)\.(\d+)")
+    # plain (non-JSON) log lines: "2026/11/01 15:44:32 ERROR : x: msg"; fatal
+    # errors ("Failed to copy: ...") have no level
+    LOG_PREFIX_RE = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d (?:([A-Z]+)\s*: )?")
+
+    @staticmethod
+    def plain_line(line):
+        """(is_error, text) of a plain log line."""
+        m = RcloneCli.LOG_PREFIX_RE.match(line)
+        level = m.group(1) if m else None
+        text = RcloneCli.LOG_PREFIX_RE.sub("", line)
+        return level in (None, "ERROR", "CRITICAL"), text
+    # Exit codes that pause a run instead of failing the item.
+    PAUSE_CODES = {
+        5: "temporary error (network or provider trouble)",
+        7: "fatal error (e.g. login expired or account problem) - fix it, e.g. with "
+           "'rclone config reconnect {0}:', then press P",
+        8: "transfer limit reached (e.g. a provider's daily upload limit)",
+    }
+    # 100 years: what rclone reports for "can't store modification times"
+    NO_MODTIME_PRECISION = 3153600000000000000
+    # rclone exits with the generic code 1 for many network failures (e.g.
+    # connection refused), so those are recognised by their text.
+    NETWORK_RE = re.compile(r"connection refused|no such host|i/o timeout|deadline exceeded|"
+                            r"network is unreachable|no route to host|connection reset|"
+                            r"name resolution|dial tcp|TLS handshake timeout", re.I)
+
+    @staticmethod
+    def is_network_error(text):
+        return bool(RcloneCli.NETWORK_RE.search(text))
+
+    @staticmethod
+    def cmd(command, args):
+        return [RcloneCli.BINARY, command, "--ask-password=false"] + list(args)
+
+    @staticmethod
+    def spawn(command, args, stdout, stderr):
+        try:
+            return subprocess.Popen(RcloneCli.cmd(command, args), stdin=subprocess.DEVNULL,
+                                    stdout=stdout, stderr=stderr)
+        except OSError as e:
+            raise FsError("could not start rclone ({0}) - is it installed and in PATH?".format(e))
+
+    @staticmethod
+    def run(command, args, timeout=RUN_TIMEOUT):
+        """Returns (rc, stdout_bytes, stderr_text)."""
+        proc = RcloneCli.spawn(command, args, subprocess.PIPE, subprocess.PIPE)
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return 124, b"", "rclone {0} timed out after {1}s".format(command, timeout)
+        return proc.returncode, out, os.fsdecode(err)
+
+    @staticmethod
+    def error_text(err, rc):
+        """The most useful line of rclone's stderr."""
+        lines = []
+        for line in err.splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict) and entry.get("level") in ("error", "critical"):
+                    lines.append(str(entry.get("msg", "")).strip())
+            elif line:
+                is_error, text = RcloneCli.plain_line(line)
+                if is_error:
+                    lines.append(text)
+        lines = [l for l in lines if l]
+        return lines[-1] if lines else "rclone exited with code {0}".format(rc)
+
+    @staticmethod
+    def version():
+        """(major, minor), or raises FsError."""
+        rc, out, err = RcloneCli.run("version", [])
+        m = RcloneCli.VERSION_RE.match(os.fsdecode(out))
+        if rc != 0 or not m:
+            raise FsError("could not run 'rclone version': " + RcloneCli.error_text(err, rc))
+        return int(m.group(1)), int(m.group(2))
+
+    @staticmethod
+    def list_remotes():
+        """Remote names from the user's rclone config, or raises FsError."""
+        rc, out, err = RcloneCli.run("listremotes", [])
+        if rc != 0:
+            text = RcloneCli.error_text(err, rc)
+            if "decrypt" in text or "password" in text.lower():
+                text = ("your rclone config is encrypted. Set RCLONE_PASSWORD_COMMAND (or "
+                        "RCLONE_CONFIG_PASS) before starting mcrsync - mcrsync never asks for "
+                        "that password itself. rclone said: " + text)
+            raise FsError(text)
+        # one "name:" per line; names may contain spaces
+        return [l[:-1] for l in os.fsdecode(out).splitlines() if l.endswith(":")]
+
+    @staticmethod
+    def parse_json(out, what):
+        try:
+            return json.loads(os.fsdecode(out))
+        except ValueError:
+            raise FsError("unexpected output from rclone " + what)
+
+
+class RcloneRemote(object):
+    """Session state of one rclone remote: whether it was checked and is
+    usable ("ready"), what its backend can do, and folders mcrsync created
+    that bucket storage can't show yet (they only exist once a file is put
+    in them)."""
+
+    def __init__(self, spec):
+        self.spec = spec
+        self.ready = False
+        self.problem = ""
+        self.modtime_ok = True
+        self.bucket_based = False
+        self.is_local = False
+        self.backend = ""   # backend name rclone resolves the remote to
+        self.root = ""      # its root path (e.g. what an alias points to)
+        self.made_dirs = set()
+
+    def verify(self):
+        """Check that the remote exists and read its features. Returns an
+        error text, or "" when ready."""
+        self.ready = False
+        try:
+            names = RcloneCli.list_remotes()
+        except FsError as e:
+            return self._failed(str(e))
+        if self.spec.remote not in names:
+            return self._failed("there is no remote '{0}' in your rclone config (see "
+                                "'rclone listremotes')".format(self.spec.remote))
+        rc, out, err = RcloneCli.run("backend", ["features", "--", self.spec.arg("/")])
+        if rc != 0:
+            return self._failed(RcloneCli.error_text(err, rc))
+        try:
+            info = RcloneCli.parse_json(out, "backend features")
+            features = info.get("Features") or {}
+            self.modtime_ok = int(info.get("Precision", 0)) < RcloneCli.NO_MODTIME_PRECISION
+            self.bucket_based = bool(features.get("BucketBased"))
+            self.is_local = bool(features.get("IsLocal"))
+            self.backend = str(info.get("Name", ""))
+            self.root = str(info.get("Root", ""))
+        except (FsError, AttributeError, TypeError, ValueError) as e:
+            return self._failed("could not read the remote's features: {0}".format(e))
+        self.ready = True
+        self.problem = ""
+        return ""
+
+    def _failed(self, text):
+        self.problem = text
+        return text
+
+    def mark_unavailable(self, text):
+        self.ready = False
+        self.problem = text
+
+    def storage_path(self, path):
+        """(storage id, absolute path) of path, to tell whether two paths
+        on different remotes can be the same place: aliases resolve to the
+        remote (or local folder) they point to. A local backend maps to
+        the local filesystem."""
+        full = posixpath.normpath("/" + "/".join(
+            p for p in (self.root.strip("/"), path.strip("/")) if p))
+        if self.is_local:
+            return "local", os.path.realpath(full)
+        return "rclone:" + self.backend, full
+
+
+class RcloneFs(Fs):
+    is_remote = True
+    kind = "rclone"
+
+    def __init__(self, remote):
+        self.remote = remote
+        self.spec = remote.spec
+
+    def label(self):
+        return "rclone " + self.spec.remote
+
+    def display_path(self, path):
+        return self.spec.display_path(path)
+
+    def rclone_arg(self, path):
+        return self.spec.arg(path)
+
+    def _run(self, command, args, timeout=RcloneCli.RUN_TIMEOUT):
+        rc, out, err = RcloneCli.run(command, args, timeout)
+        if rc == 0:
+            return rc, out, err
+        text = RcloneCli.error_text(err, rc)
+        if rc in RcloneCli.PAUSE_CODES:
+            text = "{0}: {1} - rclone said: {2}".format(
+                self.spec.key(), RcloneCli.PAUSE_CODES[rc].format(self.spec.remote), text)
+        elif RcloneCli.is_network_error(text):
+            text = "{0} can't be reached: {1}".format(self.spec.key(), text)
+        else:
+            return rc, out, err
+        self.remote.mark_unavailable(text)
+        raise RcloneUnavailable(text)
+
+    def _run_ok(self, command, args, timeout=RcloneCli.RUN_TIMEOUT):
+        rc, out, err = self._run(command, args, timeout)
+        if rc != 0:
+            raise FsError(RcloneCli.error_text(err, rc))
+        return out
+
+    @staticmethod
+    def normalize(path):
+        path = (path or "").strip()
+        if path in ("", "~"):
+            return "/"
+        # leading "//" survives posixpath.normpath
+        return posixpath.normpath("/" + path.lstrip("/"))
+
+    def resolve(self, path):
+        path = RcloneFs.normalize(path)
+        if not self.isdir(path):
+            raise FsError("folder not found: {0}".format(self.display_path(path)))
+        return path
+
+    def list_dir(self, path):
+        out = self._run_ok("lsjson", ["--no-mimetype", "--no-modtime", "--",
+                                      self.rclone_arg(path)])
+        entries = RcloneCli.parse_json(out, "lsjson")
+        if not isinstance(entries, list):
+            raise FsError("unexpected output from rclone lsjson")
+        dirs = set()
+        files = set()
+        for e in entries:
+            name = e.get("Name") if isinstance(e, dict) else None
+            if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
+                continue
+            (dirs if e.get("IsDir") else files).add(name)
+        for made in self.remote.made_dirs:
+            parent, name = posixpath.split(made)
+            if parent == path and name not in files:
+                dirs.add(name)
+        return ([(d, True) for d in sorted(dirs, key=str.lower)] +
+                [(f, False) for f in sorted(files, key=str.lower)])
+
+    def stat(self, path):
+        """"dir", "file" or None (missing)."""
+        if path == "/" or path in self.remote.made_dirs:
+            return "dir"
+        rc, out, err = self._run("lsjson", ["--stat", "--no-mimetype", "--no-modtime", "--",
+                                            self.rclone_arg(path)])
+        if rc != 0:
+            text = RcloneCli.error_text(err, rc)
+            if rc in (3, 4) or "not found" in text.lower():
+                return None
+            raise FsError(text)
+        info = RcloneCli.parse_json(out, "lsjson --stat")
+        if not isinstance(info, dict):
+            raise FsError("unexpected output from rclone lsjson --stat")
+        if not info.get("IsDir"):
+            return "file"
+        # Bucket storage reports any missing path as a folder - the
+        # parent's listing is what tells.
+        parent, name = posixpath.split(path)
+        return "dir" if (name, True) in self.list_dir(parent) else None
+
+    def exists(self, path):
+        return self.stat(path) is not None
+
+    def isdir(self, path):
+        return self.stat(path) == "dir"
+
+    def rename(self, old, new):
+        """--ignore-existing makes rclone itself skip the move if new
+        appears after our check (object storage has no atomic no-clobber
+        rename); the checks afterwards catch a move that didn't happen."""
+        if self.exists(new):
+            raise FsError("'{0}' already exists".format(posixpath.basename(new)))
+        kind = self.stat(old)
+        if kind is None:
+            raise FsError("'{0}' no longer exists".format(posixpath.basename(old)))
+        # A folder's contents go into new (which doesn't exist); on object
+        # storage that's file by file - so no time limit.
+        if kind == "dir":
+            command, args = "move", ["--ignore-existing", "--delete-empty-src-dirs"]
+        else:
+            command, args = "moveto", ["--ignore-existing"]
+        self._run_ok(command, args + ["--", self.rclone_arg(old), self.rclone_arg(new)],
+                     timeout=None)
+        if kind == "dir":
+            self.remote.made_dirs = set(
+                new + d[len(old):] if d == old or d.startswith(old + "/") else d
+                for d in self.remote.made_dirs)
+            # rmdir only ever removes an empty folder
+            self._run("rmdir", ["--", self.rclone_arg(old)])
+        if not self.exists(new):
+            raise FsError("'{0}' already exists - nothing was renamed".format(
+                posixpath.basename(new)))
+        if self.exists(old):
+            raise FsError("only partly renamed - some files are still under '{0}'".format(
+                posixpath.basename(old)))
+
+    def mkdir(self, path):
+        if self.exists(path):
+            raise FsError("'{0}' already exists".format(posixpath.basename(path)))
+        self.makedirs(path)
+
+    def makedirs(self, path):
+        self._run_ok("mkdir", ["--", self.rclone_arg(path)])
+        self.remote.made_dirs.add(path)
+
+    def size(self, path, is_dir, cancel_event):
+        with tempfile.TemporaryFile() as out:
+            proc = RcloneCli.spawn("size", ["--json", "--", self.rclone_arg(path)],
+                                   out, subprocess.DEVNULL)
+            while proc.poll() is None:
+                if cancel_event.wait(0.2):
+                    proc.kill()
+                    proc.wait()
+                    return None
+            if proc.returncode != 0:
+                return None
+            out.seek(0)
+            try:
+                info = json.loads(os.fsdecode(out.read()))
+                return int(info["bytes"]), int(info["count"])
+            except (ValueError, KeyError, TypeError):
+                return None
+
+
 class ConnectionRegistry(object):
-    """All SSH connections of this session, keyed by user@host:port. Queue
-    items may refer to connections that aren't open (e.g. after loading a
-    queue); those are opened on demand via open_interactive()."""
+    """All remote connections of this session: SSH connections keyed by
+    user@host:port, rclone remotes by rclone:name. Queue items may refer
+    to ones that aren't open (e.g. after loading a queue); those are
+    opened on demand via open_interactive()."""
 
     def __init__(self):
         self.conns = {}
+        self.rclone = {}
+        self.rclone_version_ok = False
+        self.busy = NOT_BUSY   # the UI's BusyIndicator, for the rclone checks
         self.sock_dir = None
         self.lock = threading.Lock()
         # Never reuse a socket name: a mux client talks to whatever master
@@ -1014,16 +1629,60 @@ class ConnectionRegistry(object):
                 conn.spec = spec
             return conn
 
+    def rclone_remote(self, spec):
+        with self.lock:
+            remote = self.rclone.get(spec.key())
+            if remote is None:
+                remote = RcloneRemote(spec)
+                self.rclone[spec.key()] = remote
+            return remote
+
     def fs_for(self, spec):
         if spec is None:
             return LOCAL_FS
+        if spec.kind == "rclone":
+            return RcloneFs(self.rclone_remote(spec))
         return RemoteFs(self.get(spec))
 
     def is_open(self, spec):
         if spec is None:
             return True
+        if spec.kind == "rclone":
+            return self.rclone_remote(spec).ready
         conn = self.conns.get(spec.key())
         return conn is not None and conn.check()
+
+    def problem(self, spec):
+        """Why spec isn't usable, as far as known."""
+        if spec.kind == "rclone":
+            return self.rclone_remote(spec).problem
+        return ""
+
+    def describe(self, specs):
+        """'key (reason), key' for messages about specs that failed."""
+        parts = []
+        for spec in specs:
+            why = self.problem(spec)
+            parts.append("{0} ({1})".format(spec.key(), why) if why else spec.key())
+        return "; ".join(parts)
+
+    def open_rclone(self, spec):
+        """Check rclone itself (once) and the remote. Returns error text or
+        ""; needs no terminal - rclone never prompts here."""
+        remote = self.rclone_remote(spec)
+        if not self.rclone_version_ok:
+            try:
+                version = RcloneCli.version()
+            except FsError as e:
+                remote.mark_unavailable(str(e))
+                return str(e)
+            if version < RcloneCli.MIN_VERSION:
+                text = "rclone {0}.{1} is too old - mcrsync needs {2}.{3} or newer".format(
+                    version[0], version[1], *RcloneCli.MIN_VERSION)
+                remote.mark_unavailable(text)
+                return text
+            self.rclone_version_ok = True
+        return remote.verify()
 
     def dead_specs(self, specs):
         seen = set()
@@ -1037,9 +1696,15 @@ class ConnectionRegistry(object):
         return dead
 
     def open_interactive(self, stdscr, specs):
-        """Suspend curses, open each connection in the plain terminal so ssh
-        can prompt, then restore the UI. Returns the specs that failed."""
-        failed = []
+        """Open each connection: rclone remotes are just checked, SSH ones
+        are opened in the plain terminal (curses suspended) so ssh can
+        prompt. Returns the specs that failed; problem() says why for
+        rclone ones."""
+        with self.busy:
+            failed = [s for s in specs if s.kind == "rclone" and self.open_rclone(s)]
+        specs = [s for s in specs if s.kind != "rclone"]
+        if not specs:
+            return failed
         curses.endwin()
         try:
             # The normal screen still shows output from earlier logins.
@@ -1075,6 +1740,9 @@ class ConnectionRegistry(object):
         return failed
 
     def close(self, spec):
+        if spec.kind == "rclone":
+            # nothing to log out of; keep the remote's state for queue items
+            return
         conn = self.conns.pop(spec.key(), None)
         if conn is not None:
             conn.close()
@@ -1143,6 +1811,7 @@ class Progress(object):
         self.current = ""
         self.deleted = 0
         self.conflicts = 0
+        self.conflict_bytes = 0     # rclone only - rsync doesn't report it
 
     @property
     def copied_files(self):
@@ -1158,12 +1827,46 @@ class Progress(object):
 
     @property
     def reviewed_bytes(self):
-        return self.unchanged_bytes + self.copied_bytes
+        return self.unchanged_bytes + self.copied_bytes + self.conflict_bytes
 
-    def feed_conflict(self):
-        """A file skipped because the target is newer: checked, but rsync
-        doesn't say how big it is."""
+    def _seen_file(self):
+        if self.phase in (Progress.SCANNING, Progress.FINISHING):
+            self.phase = Progress.COPYING
+
+    def feed_conflict(self, size=0):
+        """A file skipped because the target is newer. rsync doesn't say
+        how big it is."""
         self.conflicts += 1
+        self.conflict_bytes += size
+        self._seen_file()
+
+    def feed_unchanged(self, size):
+        self.unchanged_files += 1
+        self.unchanged_bytes += size
+        self._seen_file()
+
+    def feed_listed(self, size, name):
+        """A file a dry run would copy."""
+        self.listed_files += 1
+        self.listed_bytes += size
+        self.current = name
+        self._seen_file()
+
+    def feed_rclone_stats(self, stats):
+        """Apply the stats object of rclone's JSON log (every second)."""
+        try:
+            self.bytes = int(stats.get("bytes") or 0)
+            self.files = int(stats.get("transfers") or 0)
+            speed = stats.get("speed")
+            self.speed = float(speed) if speed is not None else None
+        except (TypeError, ValueError):
+            return
+        transferring = stats.get("transferring")
+        if isinstance(transferring, list) and transferring:
+            first = transferring[0]
+            if isinstance(first, dict) and isinstance(first.get("name"), str):
+                self.current = first["name"]
+                self._seen_file()
 
     def feed_progress(self, line):
         """Apply a progress2 line. Returns False if line isn't one."""
@@ -1199,8 +1902,7 @@ class Progress(object):
                 self.unchanged_bytes += size
         if kind in "<>ch":
             self.current = name
-        if self.phase in (Progress.SCANNING, Progress.FINISHING):
-            self.phase = Progress.COPYING
+        self._seen_file()
 
     @staticmethod
     def short_size(n):
@@ -1254,13 +1956,184 @@ class Progress(object):
         return " | ".join(parts)
 
 
-class RsyncRunner(object):
+class Runner(object):
+    """What rsync and rclone items share: resetting an item for a run,
+    refusing surprising item shapes, final statuses and conflict
+    resolution. Subclasses run the tool (run_item, item_cmd) and provide
+    still_conflicts() and copy_new_file() for resolutions."""
+
+    TOOL = ""
+
+    def __init__(self, registry):
+        self.registry = registry
+
+    def flags(self):
+        return FLAG_SETS[self.TOOL]
+
+    def _start(self, item, opts, log_cb):
+        """Reset item for a run. Returns dry_run."""
+        dry_run = self.flags().is_dry_run(opts)
+        item.status = STATUS_RUNNING
+        item.conflicts = []
+        item.copied_list = []
+        item.errors_list = []
+        item.error_text = ""
+        item.copied_files = 0
+        item.bytes_transferred = 0
+        item.progress = Progress(dry_run, item.size_bytes, item.size_files)
+        # Our "don't clobber newer target files" safety net relies on -u.
+        if not self.flags().has_update(opts):
+            log_cb("WARNING: -u/--update not in {0} options - newer target files may be "
+                   "overwritten for {1}".format(self.TOOL, item.src_display()))
+        return dry_run
+
+    @staticmethod
+    def safe_relname(name):
+        """A name from the tool's output that stays inside the item's
+        folder when joined to it (a hostile server or remote could report
+        '../x' or '/x')."""
+        return (bool(name) and not name.startswith("/") and "\0" not in name and
+                all(p not in ("", ".", "..") for p in name.split("/")))
+
+    @staticmethod
+    def local_path(fs, path):
+        """The local filesystem path a side writes to, or None if it isn't
+        on this machine."""
+        if fs.kind == "local":
+            return path
+        if fs.kind == "rclone" and fs.remote.is_local:
+            return fs.remote.storage_path(path)[1]
+        return None
+
+    @staticmethod
+    def storage_path(fs, path):
+        """(storage id, path) to compare two sides by, or None if unknown
+        (SSH hosts can't be compared reliably)."""
+        if fs.kind == "local":
+            return "local", os.path.realpath(path)
+        if fs.kind == "rclone":
+            return fs.remote.storage_path(path)
+        return None
+
+    def check_target(self, item, src_fs, dst_fs):
+        """Refuse item shapes where the tool would do something other than
+        the obvious copy. Returns an error text or ""."""
+        s = Runner.storage_path(src_fs, item.src)
+        d = Runner.storage_path(dst_fs, item.dst)
+        if s is not None and d is not None and s[0] == d[0]:
+            if d[1] == s[1] or d[1].startswith(s[1].rstrip("/") + "/"):
+                return "the target is the source itself or inside it"
+        if item.is_dir:
+            if dst_fs.exists(item.dst) and not dst_fs.isdir(item.dst):
+                return "a file with that name already exists in the target"
+        elif dst_fs.isdir(item.dst):
+            # rsync would copy the file INTO that folder instead
+            return "a folder with that name already exists in the target"
+        return ""
+
+    def _fail(self, item, text):
+        item.status = STATUS_FAIL
+        item.error_text = text
+        item.errors_list.append((item.src_display(), item.dst_display(), text))
+
+    def _add_results(self, item, src_fs, dst_fs, copied, newer, dry_run):
+        """Fill the Verify lists from relative names of copied files and of
+        files skipped because the target is newer."""
+        copied_remark = "would copy (dry run)" if dry_run else "OK"
+        if item.is_dir:
+            unsafe = [n for n in copied + newer if not Runner.safe_relname(n)]
+            for name in unsafe:
+                item.errors_list.append((item.src_display(), item.dst_display(),
+                                         "ignored an unexpected file name in {0}'s output: "
+                                         "{1!r}".format(self.TOOL, name)))
+            if unsafe:
+                unsafe = set(unsafe)
+                copied = [n for n in copied if n not in unsafe]
+                newer = [n for n in newer if n not in unsafe]
+        for relname in copied:
+            if item.is_dir:
+                item.copied_list.append((
+                    item.src_display(src_fs.pathmod.join(item.src, relname)),
+                    item.dst_display(dst_fs.pathmod.join(item.dst, relname)),
+                    copied_remark))
+            else:
+                item.copied_list.append((item.src_display(), item.dst_display(), copied_remark))
+        for relname in newer:
+            if item.is_dir:
+                item.conflicts.append(Conflict(relname,
+                                               src_fs.pathmod.join(item.src, relname),
+                                               dst_fs.pathmod.join(item.dst, relname),
+                                               dry_run))
+            else:
+                item.conflicts.append(Conflict(src_fs.pathmod.basename(item.src),
+                                               item.src, item.dst, dry_run))
+        item.skipped_files = len(item.conflicts)
+
+    def _set_final_status(self, item, dry_run, seconds):
+        if item.conflicts:
+            item.status = STATUS_DRY_INCOMPLETE if dry_run else STATUS_INCOMPLETE
+        elif dry_run:
+            item.status = STATUS_DRY_OK
+        else:
+            item.status = STATUS_OK
+            item.transfer_seconds = seconds
+
+    def still_conflicts(self, src_fs, src, dst_fs, dst):
+        raise NotImplementedError
+
+    def copy_new_file(self, src_fs, src, dst_fs, dst):
+        raise NotImplementedError
+
+    def resolve_conflict(self, item, conflict, action):
+        """Apply a user's chosen resolution to a single conflicting file.
+        Nothing is ever overwritten: the existing target is either renamed
+        away first or left alone."""
+        src_fs = self.registry.fs_for(item.src_conn)
+        dst_fs = self.registry.fs_for(item.dst_conn)
+        base, ext = dst_fs.pathmod.splitext(conflict.dst_full)
+        try:
+            if action != "skip" and not self.still_conflicts(
+                    src_fs, conflict.src_full, dst_fs, conflict.dst_full):
+                return False, ("the files changed since the run (or the source is gone) - "
+                               "nothing was changed. Run the item again.")
+            if action == "skip":
+                conflict.remark = "user skipped"
+            elif action == "rename":
+                # rename the EXISTING (target) file out of the way, then copy in
+                newname = "{0}.conflict-{1}{2}".format(base, int(time.time()), ext)
+                dst_fs.rename(conflict.dst_full, newname)
+                try:
+                    self.copy_new_file(src_fs, conflict.src_full, dst_fs, conflict.dst_full)
+                except FsError as e:
+                    try:
+                        dst_fs.rename(newname, conflict.dst_full)
+                        where = "the existing file was put back"
+                    except FsError:
+                        where = "the existing file is now named {0}".format(
+                            dst_fs.pathmod.basename(newname))
+                    raise FsError("copy failed ({0}); {1}".format(e, where))
+                conflict.remark = "existing renamed to {0}".format(dst_fs.pathmod.basename(newname))
+            elif action == "autorename":
+                # copy the INCOMING file in under a new auto-generated name,
+                # leaving the existing target file untouched
+                newname = "{0}.new-{1}{2}".format(base, int(time.time()), ext)
+                self.copy_new_file(src_fs, conflict.src_full, dst_fs, newname)
+                conflict.remark = "auto-renamed incoming to {0}".format(dst_fs.pathmod.basename(newname))
+            conflict.resolution = action
+            return True, ""
+        except FsError as e:
+            return False, str(e)
+
+
+class RsyncRunner(Runner):
     """Builds and runs rsync for queue items between any combination of a
-    local and (at most one) remote side, and applies conflict resolutions.
+    local and (at most one) remote side.
 
     Conflicts (target newer than source) are taken from rsync itself: with
     -u and --info=skip1 it prints '<relpath> is newer' for every file it
     skipped for that reason - so there's no separate pre-scan."""
+
+    TOOL = TOOL_RSYNC
 
     # Output format forced on every run (it overrides a user's -i): the
     # itemize code YXcstpoguax, the file size, the name. With
@@ -1273,9 +2146,6 @@ class RsyncRunner(object):
     # rsync prints non-printable bytes in names as \#ooo (and a backslash
     # as \#134, so this is unambiguous)
     ESCAPE_RE = re.compile(br"\\#([0-7]{3})")
-
-    def __init__(self, registry):
-        self.registry = registry
 
     @staticmethod
     def unescape(name):
@@ -1384,22 +2254,6 @@ class RsyncRunner(object):
             raise FsError("could not start rsync: {0}".format(e))
         return proc.returncode, [os.fsdecode(l) for l in out.split(b"\n")]
 
-    def check_target(self, item, src_fs, dst_fs):
-        """Refuse item shapes where rsync would do something other than the
-        obvious copy. Returns an error text or ""."""
-        if not src_fs.is_remote and not dst_fs.is_remote:
-            s = os.path.realpath(item.src)
-            d = os.path.realpath(item.dst)
-            if d == s or d.startswith(s.rstrip("/") + "/"):
-                return "the target is the source itself or inside it"
-        if item.is_dir:
-            if dst_fs.exists(item.dst) and not dst_fs.isdir(item.dst):
-                return "a file with that name already exists in the target"
-        elif dst_fs.isdir(item.dst):
-            # rsync would copy the file INTO that folder instead
-            return "a folder with that name already exists in the target"
-        return ""
-
     def run_item(self, item, log_cb, rsync_opts=None):
         """Run one queue item's rsync copy. Mutates item in place.
         log_cb(str) is called for progress/log lines (thread-safe queue push).
@@ -1409,20 +2263,11 @@ class RsyncRunner(object):
         to NOT SYNCED so it can be retried after reconnecting."""
         if rsync_opts is None:
             rsync_opts = DEFAULT_RSYNC_OPTS
-        dry_run = RsyncFlags.is_dry_run(rsync_opts)
-        item.status = STATUS_RUNNING
-        item.conflicts = []
-        item.copied_list = []
-        item.errors_list = []
-        item.error_text = ""
-        item.copied_files = 0
-        item.bytes_transferred = 0
-        item.progress = Progress(dry_run, item.size_bytes, item.size_files)
-
-        # Our "don't clobber newer target files" safety net relies on -u.
-        if not RsyncFlags.has_update(rsync_opts):
-            log_cb("WARNING: -u/--update not in rsync options - newer target "
-                   "files may be overwritten for {0}".format(item.src_display()))
+        dry_run = self._start(item, rsync_opts, log_cb)
+        problem = RsyncFlags.problems(rsync_opts)
+        if problem:
+            self._fail(item, problem)
+            return True
 
         src_fs = self.registry.fs_for(item.src_conn)
         dst_fs = self.registry.fs_for(item.dst_conn)
@@ -1484,24 +2329,7 @@ class RsyncRunner(object):
             return False
 
         copied, newer, errors = RsyncRunner.parse_output(out_lines)
-        copied_remark = "would copy (dry run)" if dry_run else "OK"
-        for relname in copied:
-            if item.is_dir:
-                item.copied_list.append((
-                    item.src_display(src_fs.pathmod.join(item.src, relname)),
-                    item.dst_display(dst_fs.pathmod.join(item.dst, relname)),
-                    copied_remark))
-            else:
-                item.copied_list.append((item.src_display(), item.dst_display(), copied_remark))
-        for relname in newer:
-            if item.is_dir:
-                item.conflicts.append(Conflict(relname,
-                                               src_fs.pathmod.join(item.src, relname),
-                                               dst_fs.pathmod.join(item.dst, relname),
-                                               dry_run))
-            else:
-                item.conflicts.append(Conflict(src_fs.pathmod.basename(item.src),
-                                               item.src, item.dst, dry_run))
+        self._add_results(item, src_fs, dst_fs, copied, newer, dry_run)
 
         # parse stats block
         text = "\n".join(out_lines)
@@ -1512,25 +2340,13 @@ class RsyncRunner(object):
         if m:
             item.bytes_transferred = int(m.group(1).replace(",", ""))
 
-        item.skipped_files = len(item.conflicts)
-
         if rc != 0:
             detail = errors[0] if errors else ""
             self._fail(item, "rsync exited with code {0}{1}".format(
                 rc, (" - " + detail) if detail else ""))
-        elif item.conflicts:
-            item.status = STATUS_DRY_INCOMPLETE if dry_run else STATUS_INCOMPLETE
-        elif dry_run:
-            item.status = STATUS_DRY_OK
         else:
-            item.status = STATUS_OK
-            item.transfer_seconds = transfer_end - transfer_start
+            self._set_final_status(item, dry_run, transfer_end - transfer_start)
         return True
-
-    def _fail(self, item, text):
-        item.status = STATUS_FAIL
-        item.error_text = text
-        item.errors_list.append((item.src_display(), item.dst_display(), text))
 
     def still_conflicts(self, src_fs, src, dst_fs, dst):
         """Dry-run probe: is dst still newer than src? Guards resolutions
@@ -1555,45 +2371,370 @@ class RsyncRunner(object):
             raise FsError("'{0}' already exists - nothing was overwritten".format(
                 dst_fs.pathmod.basename(dst)))
 
-    def resolve_conflict(self, item, conflict, action):
-        """Apply a user's chosen resolution to a single conflicting file.
-        Nothing is ever overwritten: the existing target is either renamed
-        away first or left alone."""
+
+class RcloneRunner(Runner):
+    """Runs 'rclone copy' (folders) or 'copyto' (files) for items with an
+    rclone remote on at least one side and a local folder or another
+    rclone remote on the other. Neither command deletes from the target.
+
+    Everything is read from rclone's JSON log at DEBUG level: an entry for
+    every file checked (copied, skipped because the target is newer, or
+    unchanged) and a stats entry every second. Unchanged files are logged
+    without their size, so the source is listed first for the reviewed
+    progress."""
+
+    TOOL = TOOL_RCLONE
+    FORCED_OPTS = ["--use-json-log", "--log-level", "DEBUG", "--stats", "1s"]
+    NEWER_MSG = "Destination is newer than source, skipping"
+    COPIED_PREFIX = "Copied ("
+    DRY_RUN_PREFIX = "Skipped copy as --dry-run is set"
+    SYMLINK_PREFIX = "Can't follow symlink"
+
+    @staticmethod
+    def parse_line(line):
+        """(kind, name, value) for one line of rclone's output, or None.
+        kind: "stats" (value = stats dict), "copied" (value = True if it
+        replaced a file), "would_copy" (value = size), "newer",
+        "unchanged", "symlink", "error" / "notice" (value = text)."""
+        line = line.strip()
+        if not line:
+            return None
+        if not line.startswith("{"):
+            # e.g. the final "Failed to copy: ..." line, or notices printed
+            # before the JSON log is set up
+            is_error, text = RcloneCli.plain_line(line)
+            return ("error" if is_error else "notice", "", text)
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return ("error", "", line)
+        if not isinstance(entry, dict):
+            return None
+        if isinstance(entry.get("stats"), dict):
+            return ("stats", "", entry["stats"])
+        msg = str(entry.get("msg", "")).strip()
+        level = entry.get("level")
+        obj = entry.get("object")
+        name = obj if isinstance(obj, str) else ""
+        if name and msg.startswith(RcloneRunner.SYMLINK_PREFIX):
+            return ("symlink", name, msg)
+        if name and str(entry.get("objectType", "")).endswith("Object"):
+            if msg == RcloneRunner.NEWER_MSG:
+                return ("newer", name, None)
+            if msg.startswith(RcloneRunner.COPIED_PREFIX):
+                return ("copied", name, "replaced" in msg)
+            if msg.startswith(RcloneRunner.DRY_RUN_PREFIX):
+                size = entry.get("size")
+                return ("would_copy", name, size if isinstance(size, int) else 0)
+            if level == "debug" and msg.endswith("skipping"):
+                return ("unchanged", name, None)
+        if level in ("error", "critical", "warning", "notice"):
+            kind = "error" if level in ("error", "critical") else "notice"
+            return (kind, name, "{0}: {1}".format(name, msg) if name else msg)
+        return None
+
+    @staticmethod
+    def describe_event(event, dry_run, size):
+        """Readable run-log text for an event, or None."""
+        kind, name, value = event
+        if kind == "copied":
+            return "{0}: {1} ({2})".format("replaced" if value else "copied", name,
+                                           Progress.short_size(size))
+        if kind == "would_copy":
+            return "would be copied: {0} ({1})".format(name, Progress.short_size(value))
+        if kind == "newer":
+            return "CONFLICT (target newer, not copied): {0}".format(name)
+        if kind == "symlink":
+            return "rclone error: symlink skipped (tick -l, --links to keep it): {0}".format(name)
+        if kind in ("error", "notice"):
+            return "rclone {0}: {1}".format(kind, value)
+        return None
+
+    @staticmethod
+    def side_arg(fs, path):
+        if fs.kind == "ssh":
+            raise FsError("rclone can't copy to or from an SSH pane")
+        return fs.rclone_arg(path)
+
+    @staticmethod
+    def effective_opts(opts, dst_fs):
+        """--links turns .rclonelink files back into symlinks when writing
+        to a local folder, and rclone then writes later files THROUGH such
+        a symlink - so a remote could place files anywhere. It is only used
+        for uploads."""
+        if Runner.local_path(dst_fs, "/") is not None:
+            return RcloneFlags.without(opts, "l", "--links")
+        return list(opts)
+
+    def item_args(self, item, opts, src_fs, dst_fs):
+        # '--': a path can never be taken as an option
+        return RcloneRunner.effective_opts(opts, dst_fs) + RcloneRunner.FORCED_OPTS + [
+            "--", RcloneRunner.side_arg(src_fs, item.src), RcloneRunner.side_arg(dst_fs, item.dst)]
+
+    @staticmethod
+    def command(item):
+        # copy: the folder's contents into item.dst; copyto: the file AS item.dst
+        return "copy" if item.is_dir else "copyto"
+
+    def item_cmd(self, item, opts, src_fs, dst_fs):
+        return RcloneCli.cmd(RcloneRunner.command(item), self.item_args(item, opts, src_fs, dst_fs))
+
+    def list_source(self, item, src_fs, opts):
+        """((relpath -> size of each file, set of folder relpaths), "") of a
+        folder item's source, or (None, error text)."""
+        args = ["-R", "--no-mimetype", "--no-modtime"]
+        # the same names the copy will log, e.g. 'x.rclonelink' for a symlink
+        for short, long_name in (("l", "--links"), ("L", "--copy-links")):
+            if RcloneFlags.has(opts, short, long_name):
+                args.append(long_name)
+        sizes = {}
+        dirs = set()
+        # stderr to a file: only stdout is read while rclone runs
+        with tempfile.TemporaryFile() as err:
+            try:
+                proc = RcloneCli.spawn("lsjson", args + ["--", src_fs.rclone_arg(item.src)],
+                                       subprocess.PIPE, err)
+            except FsError as e:
+                return None, str(e)
+            # one entry per line: {"Path":"a/b.txt",...},
+            for raw in proc.stdout:
+                line = raw.strip().rstrip(b",")
+                if not line.startswith(b"{"):
+                    continue
+                try:
+                    entry = json.loads(os.fsdecode(line))
+                    path = entry["Path"]
+                    if not isinstance(path, str):
+                        continue
+                    if entry["IsDir"]:
+                        dirs.add(path)
+                    else:
+                        sizes[path] = int(entry["Size"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+            proc.stdout.close()
+            proc.wait()
+            if proc.returncode != 0:
+                err.seek(0)
+                return None, RcloneCli.error_text(os.fsdecode(err.read()), proc.returncode)
+        return (sizes, dirs), ""
+
+    @staticmethod
+    def symlink_in_target(item, dst_fs, listing):
+        """A symlink in a local target folder where the source has a
+        folder: rclone would write that folder's files through it, i.e.
+        outside the target. Returns its relative path, or ""."""
+        root = Runner.local_path(dst_fs, item.dst)
+        if root is None or not item.is_dir:
+            return ""
+        sizes, dirs = listing
+        prefixes = set(dirs)
+        for rel in sizes:
+            parts = rel.split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                prefixes.add("/".join(parts[:i]))
+        # shortest first: a link higher up hides everything below it
+        for rel in sorted(prefixes, key=lambda p: (p.count("/"), p)):
+            if Runner.safe_relname(rel) and os.path.islink(os.path.join(root, rel)):
+                return rel
+        return ""
+
+    def _pause(self, item, rc, errors, log_cb):
+        """For exit codes worth retrying later: the item goes back to NOT
+        SYNCED and its rclone remotes count as not connected, which pauses
+        the run until the user presses P."""
+        item.status = STATUS_PENDING
+        for spec in item.conn_specs():
+            if spec.kind == "rclone":
+                text = "{0}: {1}".format(spec.key(), RcloneCli.PAUSE_CODES[rc].format(spec.remote))
+                if errors:
+                    text += " - rclone said: " + errors[0]
+                self.registry.rclone_remote(spec).mark_unavailable(text)
+        log_cb("CONNECTION LOST: rclone exited with code {0} during {1}".format(
+            rc, item.src_display()))
+
+    def unreachable_side(self, item, src_fs, dst_fs):
+        """After a failed copy: the text of a remote that can't be reached
+        (it is then marked as not connected), or ""."""
+        for fs, path in ((src_fs, item.src), (dst_fs, dst_fs.pathmod.dirname(item.dst))):
+            if fs.kind != "rclone":
+                continue
+            try:
+                fs.exists(path)
+            except RcloneUnavailable as e:
+                return str(e)
+            except FsError:
+                pass
+        return ""
+
+    def run_item(self, item, log_cb, opts=None):
+        """Like RsyncRunner.run_item. Returns False if the run should pause
+        (see _pause)."""
+        if opts is None:
+            opts = DEFAULT_RCLONE_OPTS
+        dry_run = self._start(item, opts, log_cb)
         src_fs = self.registry.fs_for(item.src_conn)
         dst_fs = self.registry.fs_for(item.dst_conn)
-        base, ext = dst_fs.pathmod.splitext(conflict.dst_full)
+        problem = RcloneFlags.problems(opts)
+        if problem:
+            self._fail(item, problem)
+            return True
         try:
-            if action != "skip" and not self.still_conflicts(
-                    src_fs, conflict.src_full, dst_fs, conflict.dst_full):
-                return False, ("the files changed since the run (or the source is gone) - "
-                               "nothing was changed. Run the item again.")
-            if action == "skip":
-                conflict.remark = "user skipped"
-            elif action == "rename":
-                # rename the EXISTING (target) file out of the way, then copy in
-                newname = "{0}.conflict-{1}{2}".format(base, int(time.time()), ext)
-                dst_fs.rename(conflict.dst_full, newname)
-                try:
-                    self.copy_new_file(src_fs, conflict.src_full, dst_fs, conflict.dst_full)
-                except FsError as e:
-                    try:
-                        dst_fs.rename(newname, conflict.dst_full)
-                        where = "the existing file was put back"
-                    except FsError:
-                        where = "the existing file is now named {0}".format(
-                            dst_fs.pathmod.basename(newname))
-                    raise FsError("copy failed ({0}); {1}".format(e, where))
-                conflict.remark = "existing renamed to {0}".format(dst_fs.pathmod.basename(newname))
-            elif action == "autorename":
-                # copy the INCOMING file in under a new auto-generated name,
-                # leaving the existing target file untouched
-                newname = "{0}.new-{1}{2}".format(base, int(time.time()), ext)
-                self.copy_new_file(src_fs, conflict.src_full, dst_fs, newname)
-                conflict.remark = "auto-renamed incoming to {0}".format(dst_fs.pathmod.basename(newname))
-            conflict.resolution = action
-            return True, ""
+            problem = self.check_target(item, src_fs, dst_fs)
+            if problem:
+                self._fail(item, "not copied: " + problem)
+                return True
+            args = self.item_args(item, opts, src_fs, dst_fs)
+        except ConnectionLost as e:
+            item.status = STATUS_PENDING
+            log_cb("CONNECTION LOST: {0}".format(e))
+            return False
         except FsError as e:
-            return False, str(e)
+            self._fail(item, "could not check the target: {0}".format(e))
+            return True
+
+        progress = item.progress
+        progress.phase = Progress.SCANNING
+        sizes = {}
+        if item.is_dir:
+            listing, list_error = self.list_source(
+                item, src_fs, RcloneRunner.effective_opts(opts, dst_fs))
+            if listing is None and Runner.local_path(dst_fs, item.dst) is not None:
+                # without the listing the symlink check below can't be done
+                lost = self.unreachable_side(item, src_fs, dst_fs)
+                if lost:
+                    item.status = STATUS_PENDING
+                    log_cb("CONNECTION LOST: {0} (during {1})".format(lost, item.src_display()))
+                    return False
+                self._fail(item, "could not list the source: " + list_error)
+                return True
+            if listing is not None:
+                link = RcloneRunner.symlink_in_target(item, dst_fs, listing)
+                if link:
+                    self._fail(item, "not copied: the target has a symlink '{0}' where the "
+                                     "source has a folder - rclone would write through it, "
+                                     "outside the target".format(link))
+                    return True
+                sizes = listing[0]
+
+        def size_of(name):
+            return sizes.get(name, 0) if item.is_dir else (item.size_bytes or 0)
+
+        transfer_start = time.time()
+        try:
+            proc = RcloneCli.spawn(RcloneRunner.command(item), args, subprocess.PIPE,
+                                   subprocess.STDOUT)
+        except FsError as e:
+            self._fail(item, str(e))
+            return True
+        copied = []
+        newer = []
+        errors = []
+        stats = {}
+        fd = proc.stdout.fileno()
+        for raw in RsyncRunner.segments(lambda: os.read(fd, 65536)):
+            event = RcloneRunner.parse_line(os.fsdecode(raw))
+            if event is None:
+                continue
+            kind, name, value = event
+            if kind == "stats":
+                stats = value
+                progress.feed_rclone_stats(value)
+                continue
+            if kind == "copied":
+                copied.append(name)
+            elif kind == "would_copy":
+                copied.append(name)
+                progress.feed_listed(value, name)
+            elif kind == "newer":
+                newer.append(name)
+                progress.feed_conflict(size_of(name))
+            elif kind == "unchanged":
+                progress.feed_unchanged(size_of(name))
+            elif kind == "symlink":
+                full = src_fs.pathmod.join(item.src, name) if item.is_dir else item.src
+                item.errors_list.append((item.src_display(full), item.dst_display(),
+                                         "symlink skipped - tick -l, --links to keep it"))
+            elif kind == "error":
+                errors.append(value)
+            text = RcloneRunner.describe_event(event, dry_run, size_of(name))
+            if text:
+                log_cb(text)
+        proc.stdout.close()
+        proc.wait()
+        progress.phase = Progress.DONE
+        rc = proc.returncode
+
+        if rc in RcloneCli.PAUSE_CODES:
+            self._pause(item, rc, errors, log_cb)
+            return False
+        if rc != 0:
+            lost = self.unreachable_side(item, src_fs, dst_fs)
+            if lost:
+                item.status = STATUS_PENDING
+                log_cb("CONNECTION LOST: {0} (during {1})".format(lost, item.src_display()))
+                return False
+        self._add_results(item, src_fs, dst_fs, copied, newer, dry_run)
+        item.copied_files = progress.copied_files
+        item.bytes_transferred = progress.copied_bytes
+        if rc != 0:
+            self._fail(item, "rclone exited with code {0}{1}".format(
+                rc, (" - " + errors[0]) if errors else ""))
+        else:
+            self._set_final_status(item, dry_run, time.time() - transfer_start)
+        return True
+
+    def _run_events(self, command, args):
+        """Run a short rclone command with a JSON log. Returns (rc, events,
+        stderr). Exit codes worth retrying become FsError right away."""
+        rc, out, err = RcloneCli.run(command, ["--use-json-log"] + args, timeout=None)
+        if rc in RcloneCli.PAUSE_CODES:
+            raise FsError("{0} (rclone exit code {1}) - try again later".format(
+                RcloneCli.error_text(err, rc), rc))
+        events = [e for e in (RcloneRunner.parse_line(l) for l in err.splitlines()) if e]
+        return rc, events, err
+
+    def still_conflicts(self, src_fs, src, dst_fs, dst):
+        rc, events, err = self._run_events("copyto", [
+            "--update", "--dry-run", "--log-level", "DEBUG", "--",
+            RcloneRunner.side_arg(src_fs, src), RcloneRunner.side_arg(dst_fs, dst)])
+        return rc == 0 and any(e[0] == "newer" for e in events)
+
+    def copy_new_file(self, src_fs, src, dst_fs, dst):
+        """Copy src to dst, which must not exist yet. Ignores the user's
+        rclone flags; --ignore-existing makes rclone itself refuse to
+        replace anything, and its log proves the copy happened."""
+        rc, events, err = self._run_events("copyto", [
+            "--ignore-existing", "--log-level", "INFO", "--",
+            RcloneRunner.side_arg(src_fs, src), RcloneRunner.side_arg(dst_fs, dst)])
+        if rc != 0:
+            raise FsError(RcloneCli.error_text(err, rc))
+        if not any(e[0] == "copied" for e in events):
+            raise FsError("'{0}' already exists - nothing was overwritten".format(
+                dst_fs.pathmod.basename(dst)))
+
+
+class Transfers(object):
+    """Picks each queue item's runner: rclone if either side is an rclone
+    remote, else rsync."""
+
+    def __init__(self, registry):
+        self.registry = registry
+        self.runners = {TOOL_RSYNC: RsyncRunner(registry), TOOL_RCLONE: RcloneRunner(registry)}
+
+    def for_item(self, item):
+        return self.runners[item.tool()]
+
+    def run_item(self, item, log_cb, opts):
+        return self.for_item(item).run_item(item, log_cb, opts)
+
+    def item_cmd(self, item, opts):
+        return self.for_item(item).item_cmd(item, opts,
+                                            self.registry.fs_for(item.src_conn),
+                                            self.registry.fs_for(item.dst_conn))
+
+    def resolve_conflict(self, item, conflict, action):
+        return self.for_item(item).resolve_conflict(item, conflict, action)
 
 
 # ----------------------------------------------------------------------
@@ -1865,8 +3006,162 @@ def form_dialog(stdscr, title, fields, error=""):
             edit_text(values[focus], c)
 
 
+def pick_dialog(stdscr, title, label, options, index=0, notes=None):
+    """Modal list to choose one of options (strings). notes is an optional
+    (heading, lines) section below the list, behind a divider. Up/Down
+    move, Enter picks, Esc cancels. Returns the chosen index or None."""
+    h, w = stdscr.getmaxyx()
+    if h < 9 or w < 30:
+        message(stdscr, "The terminal is too small for this list.")
+        return None
+    note_lines = notes[1] if notes else ()
+    box_w = min(max([40, len(label) + 6, max(len(o) for o in options) + 10] +
+                    [len(n) + 6 for n in note_lines]), w - 2)
+    # blank line + divider + lines - only if the list still fits
+    notes_h = len(note_lines) + 2 if notes else 0
+    if h < len(options) + 8 + notes_h:
+        notes_h = 0
+    list_h = max(1, min(len(options), h - 8 - notes_h))
+    box_h = list_h + 6 + notes_h
+    win = curses.newwin(box_h, box_w, max(0, (h - box_h) // 2), max(0, (w - box_w) // 2))
+    win.keypad(True)
+    index = max(0, min(index, len(options) - 1))
+    while True:
+        win.erase()
+        win.border()
+        safe_addstr(win, 0, 2, " " + title + " ", curses.A_BOLD)
+        safe_addstr(win, 1, 2, label)
+        scroll = max(0, index - list_h + 1)
+        for i in range(list_h):
+            n = scroll + i
+            if n >= len(options):
+                break
+            safe_addstr(win, 3 + i, 4, options[n].ljust(box_w - 8),
+                        curses.A_REVERSE if n == index else 0)
+        if notes_h:
+            y = 4 + list_h
+            try:
+                win.addch(y, 0, curses.ACS_LTEE)
+                win.hline(y, 1, curses.ACS_HLINE, box_w - 2)
+                win.addch(y, box_w - 1, curses.ACS_RTEE)
+            except curses.error:
+                pass
+            safe_addstr(win, y, 2, " " + notes[0] + " ", curses.A_BOLD)
+            for i, line in enumerate(note_lines):
+                safe_addstr(win, y + 1 + i, 2, line)
+        safe_addstr(win, box_h - 2, 2, "Up/Down: choose  Enter: OK  Esc: cancel", curses.A_DIM)
+        win.noutrefresh()
+        curses.doupdate()
+        c = read_key(win)
+        if c == 27:
+            return None
+        if c in (10, 13, curses.KEY_ENTER):
+            return index
+        if c == curses.KEY_UP:
+            index = max(0, index - 1)
+        elif c == curses.KEY_DOWN:
+            index = min(len(options) - 1, index + 1)
+
+
 def flash(win):
     curses.flash()
+
+
+class NotBusy(object):
+    """Stand-in for BusyIndicator where there is no screen (and in tests)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+NOT_BUSY = NotBusy()
+
+
+class BusyIndicator(object):
+    """'with busy:' around something slow the main thread waits for
+    (listing a remote folder, checking an rclone remote, ...): a
+    highlighted spinner label covers the free right end of a frame's top
+    border, ending at its corner, so a key press visibly did something.
+    Nestable.
+
+    curses isn't thread-safe, but inside the block the main thread makes no
+    curses calls - so the spinner thread is the only one drawing, and it
+    has stopped before the block returns. Never use it around anything
+    that shows a dialog or leaves curses (ssh logins)."""
+
+    FRAMES = "|/-\\"
+    # widest that fits the free border; {0} is the spinner frame
+    LABELS = ("[ {0} working ]", "[ {0} ]", "{0}")
+    DELAY = 0.15        # quick operations don't flicker
+    STEP = 0.12
+
+    def __init__(self, cell):
+        # cell() -> (y, x of the top-right corner, free border cells left of
+        # it), or None
+        self.cell = cell
+        self.depth = 0
+        self.stop = threading.Event()
+        self.thread = None
+
+    def __enter__(self):
+        self.depth += 1
+        if self.depth == 1:
+            self.stop.clear()
+            self.thread = threading.Thread(target=self._spin)
+            self.thread.daemon = True
+            self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.depth -= 1
+        if self.depth == 0:
+            self.stop.set()
+            self.thread.join()
+            self.thread = None
+        return False
+
+    def _spin(self):
+        if self.stop.wait(BusyIndicator.DELAY):
+            return
+        cell = self.cell()
+        if cell is None:
+            return
+        y, x, room = cell
+        # the label's last cell is the corner itself
+        label = next(l for l in BusyIndicator.LABELS if len(l.format("x")) - 1 <= room)
+        width = len(label.format("x"))
+        try:
+            win = curses.newwin(1, width, y, x - width + 1)
+        except curses.error:
+            return
+        frame = 0
+        while True:
+            try:
+                # insstr: unlike addstr it doesn't fail on a window's last cell
+                # reverse video: the terminal's own colours swapped, readable
+                # in any colour theme
+                win.insstr(0, 0, label.format(
+                    BusyIndicator.FRAMES[frame % len(BusyIndicator.FRAMES)]),
+                    curses.A_BOLD | curses.A_REVERSE)
+                win.noutrefresh()
+                curses.doupdate()
+            except curses.error:
+                pass
+            frame += 1
+            if self.stop.wait(BusyIndicator.STEP):
+                break
+        try:
+            # the border it covered; the next full redraw repaints it anyway
+            win.erase()
+            win.hline(0, 0, curses.ACS_HLINE, width - 1)
+            win.insch(0, width - 1, curses.ACS_URCORNER)
+            win.noutrefresh()
+            curses.doupdate()
+        except curses.error:
+            pass
 
 
 def message(stdscr, text):
@@ -1888,8 +3183,9 @@ def message(stdscr, text):
 # ----------------------------------------------------------------------
 
 class Pane(object):
-    def __init__(self, path, fs):
+    def __init__(self, path, fs, busy=NOT_BUSY):
         self.fs = fs
+        self.busy = busy
         self.path = fs.resolve(path)
         # where to go back to when a remote pane is disconnected
         self.local_path = self.path
@@ -1901,7 +3197,8 @@ class Pane(object):
 
     def reload(self):
         try:
-            self.entries = self.fs.list_dir(self.path)
+            with self.busy:
+                self.entries = self.fs.list_dir(self.path)
             self.error = ""
         except ConnectionLost as e:
             self.entries = []
@@ -2004,6 +3301,11 @@ HELP_TEXT = [
     "  The screen needs at least 48 x 15 characters; a smaller terminal",
     "  shows a notice instead (a running queue keeps going).",
     "",
+    "  While mcrsync waits for something slow - listing a remote folder,",
+    "  checking an rclone remote, a rename - '[ / working ]' shows at the",
+    "  right end of the QUEUE box's top border (in other views: of the",
+    "  screen's). Keys pressed meanwhile are handled afterwards.",
+    "",
     "NAVIGATE VIEW (left = SOURCE pane, right = TARGET pane, bottom = last",
     "5 queued items)",
     "  Tab             switch active pane between SOURCE (left) and",
@@ -2035,17 +3337,18 @@ HELP_TEXT = [
     "                  rename: type the name, OK/Cancel/Tab/Enter/Esc.",
     "                  Refuses to create it if something with that name",
     "                  already exists.",
-    "  O               connect the active pane to a remote host over SSH,",
-    "                  or - if it already is remote - disconnect it and go",
-    "                  back to the local folder it showed before.",
+    "  O               connect the active pane to a remote host over SSH or",
+    "                  to an rclone remote (you choose which), or - if it",
+    "                  already is remote - disconnect it and go back to the",
+    "                  local folder it showed before.",
     "",
     "REMOTE (SSH) PANES",
     "  Either pane can show a remote host instead of the local disk, so you",
     "  can push (local SOURCE -> remote TARGET) or pull (remote SOURCE ->",
-    "  local TARGET). Only one pane can be remote at a time, because rsync",
+    "  local TARGET). The other pane must then be local, because rsync",
     "  can't copy directly between two remote hosts.",
     "",
-    "  Pressing O opens a form:",
+    "  Pressing O and choosing SSH opens a form:",
     "    User          login name on the remote host",
     "    Host          host name or IPv4 address (IPv6 isn't supported)",
     "    Port          SSH port, normally 22",
@@ -2077,6 +3380,51 @@ HELP_TEXT = [
     "  press F8, mcrsync asks you to log in to any host the queue needs",
     "  that isn't connected yet.",
     "",
+    "RCLONE PANES (cloud and object storage)",
+    "  A pane can also show a remote from your own rclone config (S3, B2,",
+    "  Google Drive, OneDrive, ...). Items to or from it are copied with",
+    "  rclone instead of rsync. The other pane can be local or another",
+    "  rclone remote, but not an SSH host. Needs rclone 1.60 or newer.",
+    "",
+    "  Pressing O and choosing rclone lists your remotes (set them up with",
+    "  'rclone config' first), then asks for the folder to start in (e.g.",
+    "  bucket/photos; blank = top level). mcrsync never sees your cloud",
+    "  credentials. An encrypted rclone config works only if",
+    "  RCLONE_PASSWORD_COMMAND or RCLONE_CONFIG_PASS is set when mcrsync",
+    "  starts - mcrsync never asks for that password.",
+    "",
+    "  Folders are copied with 'rclone copy', single files with 'rclone",
+    "  copyto'; neither deletes anything on the target. With the default",
+    "  --update, newer target files become conflicts, as with rsync.",
+    "  Remotes that can't store modification times (some WebDAV/FTP",
+    "  servers) compare with upload times instead - you are warned about",
+    "  them when connecting and on the F8 screen.",
+    "",
+    "  Symlinks: with -l/--links (default) a symlink is uploaded as a small",
+    "  name.rclonelink file. Without it, symlinks are skipped and listed in",
+    "  Verify -> ERRORS. Copies INTO a local folder never use --links, so",
+    "  .rclonelink files stay plain files there - a link planted on the",
+    "  remote can't make later files land outside the target. For the same",
+    "  reason an item is refused if its local target has a symlink where",
+    "  the source has a folder.",
+    "  Permissions and owners are only kept with -M/--metadata, and only",
+    "  where the backend supports it.",
+    "",
+    "  On bucket storage (S3, B2, ...) folders only exist once they contain",
+    "  a file; folders you create with Insert stay visible for this",
+    "  session. Renaming (F2 and conflict resolution) never replaces an",
+    "  existing name, but isn't atomic there: a rename is a copy plus a",
+    "  delete, so an interrupted one can leave both names, never none.",
+    "",
+    "  If rclone gives up with a temporary error (network or provider",
+    "  trouble), a login/account problem or a provider's transfer limit,",
+    "  the run pauses like a lost SSH connection: fix the cause, then",
+    "  press P. Other errors make the item SYNC FAIL.",
+    "",
+    "  Copying a folder into itself is refused for the same remote, aliases",
+    "  and local paths; two different remotes that point to the same",
+    "  storage in other ways (e.g. a crypt remote) can't be detected.",
+    "",
     "QUEUE EDITOR VIEW (single pane: size, files, #, source, dest, status)",
     "  Up / Down       move selection",
     "  PgUp / PgDn     scroll a full page",
@@ -2107,7 +3455,7 @@ HELP_TEXT = [
     "    NOT SYNCED    queued, not yet attempted",
     "    IN PROGRESS   currently being copied",
     "    SYNCED OK     completed cleanly",
-    "    SYNC FAIL     rsync returned a hard error",
+    "    SYNC FAIL     rsync or rclone returned a hard error",
     "    INCOMPLETE    copy ran, but some files were skipped because the",
     "                  target copy was newer than the source (needs your",
     "                  attention in the Verify view)",
@@ -2118,24 +3466,29 @@ HELP_TEXT = [
     "                  (listed in Verify -> SKIPPED, but can't be resolved",
     "                  until a real run)",
     "",
-    "RSYNC OPTIONS SCREEN (opened by F8, before anything actually runs)",
-    "  These flags are GLOBAL - they apply to every item in the queue.",
+    "RUN OPTIONS SCREEN (opened by F8, before anything actually runs)",
+    "  rsync and rclone each have their own flags, and each set applies to",
+    "  every queue item copied with that tool. Only the tools the queue",
+    "  uses are shown.",
     "  Up / Down       move through the flag checkboxes",
     "  Space           switch the selected flag on/off. Flags without a",
     "                  checkbox (e.g. --exclude=...) are listed under",
     "                  'Other flags' and kept as they are.",
-    "  E               edit all flags as a free-form string (shell-style",
-    "                  quoting is respected)",
-    "  D               restore the built-in defaults",
-    "                  (-a -u --stats --itemize-changes)",
+    "  E               edit all flags of the selected tool as a free-form",
+    "                  string (shell-style quoting is respected). Values",
+    "                  must be attached with '=' (--exclude='*.tmp'): a",
+    "                  separate word would be one more path to copy.",
+    "  D               restore the selected tool's built-in defaults",
+    "                  (rsync: -a -u --stats --itemize-changes,",
+    "                  rclone: --update --links)",
     "  Enter           confirm and start the run. If -u/--update is not",
     "                  in the flags you'll get an extra confirmation,",
     "                  because that flag is what protects newer target",
     "                  files from being overwritten.",
     "  Esc             cancel, go back without starting anything",
     "",
-    "  Below the checkboxes is the exact rsync command the first item to",
-    "  run will get - the other items differ only in their paths.",
+    "  Below the checkboxes is the exact command the first item of each",
+    "  tool will get - the other items differ only in their paths.",
     "",
     "  Note: --stats fills in the Verify view's counts; removing it is fine",
     "  for rsync itself, but Verify will have less detail to show. The",
@@ -2144,6 +3497,10 @@ HELP_TEXT = [
     "  --out-format (files skipped because the target is newer, live",
     "  progress, and one line per checked file with its size) and, for",
     "  remote items, -s -e 'ssh ...'.",
+    "  For rclone, mcrsync adds --use-json-log --log-level DEBUG --stats 1s",
+    "  (its log is how mcrsync sees progress and conflicts), so rclone",
+    "  flags that change the log or progress output (-v, -q, -P,",
+    "  --log-file, --stats..., ...) are refused.",
     "",
     "LIVE PROGRESS (bottom of NAV, QUEUE and RUN LOG views while running)",
     "  > #3 photos | copying | reviewed 812.4M of 1.7G (47%) |",
@@ -2190,7 +3547,8 @@ HELP_TEXT = [
     "                  source) - these need you to pick a resolution",
     "    RENAMED       conflicts you've already resolved with Rename or",
     "                  Autorename, and what they were renamed to",
-    "    ERRORS        hard failures (non-zero rsync exit code, etc.)",
+    "    ERRORS        hard failures (rsync or rclone errors, skipped",
+    "                  symlinks, etc.)",
     "",
     "SAFETY NOTES",
     "  - The default rsync flags include -u (--update), so rsync itself",
@@ -2217,9 +3575,16 @@ HELP_TEXT = [
     "    back. These copies use only -t, not your custom rsync flags.",
     "  - F2 rename and Insert never replace an existing file or folder,",
     "    locally or remotely.",
-    "  - The F8 screen always shows all rsync flags and marks those that",
-    "    can delete or overwrite data or run commands (--delete...,",
-    "    --remove-source-files, --inplace, --append, --rsync-path, -e).",
+    "  - The F8 screen always shows all flags and marks (CAUTION) those",
+    "    that can delete or overwrite data, write outside the target or",
+    "    run commands (--delete..., --remove-source-files, --inplace,",
+    "    --log-file, -K, -e, rclone's ...-command flags, ...). Flags",
+    "    mcrsync doesn't know - e.g. rclone backend flags, which can change",
+    "    where data goes - are marked CHECK. Loading a queue file shows",
+    "    both before you decide whether to use its flags.",
+    "  - File names in rsync's or rclone's output that would lead out of",
+    "    the item's folder ('..', absolute paths) are ignored and listed in",
+    "    Verify -> ERRORS.",
     "  - The item being copied can't be deleted from the queue; other",
     "    items can, and the run picks up the change.",
     "",
@@ -2247,11 +3612,13 @@ class App(object):
         self.stdscr = stdscr
         self.view = VIEW_NAV
         self.registry = ConnectionRegistry()
-        self.runner = RsyncRunner(self.registry)
+        self.runner = Transfers(self.registry)
         self.settings = Settings()
         self.settings.load()
-        self.left = Pane(start_path, LOCAL_FS)
-        self.right = Pane(start_path, LOCAL_FS)
+        self.busy = BusyIndicator(self.busy_cell)
+        self.registry.busy = self.busy
+        self.left = Pane(start_path, LOCAL_FS, self.busy)
+        self.right = Pane(start_path, LOCAL_FS, self.busy)
         self.active = "left"
         self.queue = []                 # list[QueueItem]
         self.queue_index = 0
@@ -2264,6 +3631,7 @@ class App(object):
         self.verify_index = 0
         self.flash_count = 0
         self.rsync_opts = list(DEFAULT_RSYNC_OPTS)
+        self.rclone_opts = list(DEFAULT_RCLONE_OPTS)
         self.options_index = 0
         self.help_scroll = 0
         self.prev_view = VIEW_NAV
@@ -2418,34 +3786,80 @@ class App(object):
             remaining_bytes -= min(running.size_bytes, running.progress.reviewed_bytes)
         return (percent, remaining_bytes / avg_rate)
 
+    def opts_for(self, tool):
+        return self.rclone_opts if tool == TOOL_RCLONE else self.rsync_opts
+
+    def set_opts(self, tool, opts):
+        if tool == TOOL_RCLONE:
+            self.rclone_opts = opts
+        else:
+            self.rsync_opts = opts
+
     def save_queue(self, path):
         data = {
             "rsync_opts": self.rsync_opts,
+            "rclone_opts": self.rclone_opts,
             "items": [it.to_dict() for it in self.queue],
         }
         atomic_write(path, json.dumps(data, indent=2))
 
     @staticmethod
+    def check_opts(data, key):
+        """A queue file's flag list for one tool, or None if absent."""
+        if key not in data:
+            return None
+        opts = data[key]
+        if (not isinstance(opts, list) or not opts or
+                not all(isinstance(o, str) and "\0" not in o for o in opts)):
+            raise ValueError("invalid {0} in queue file".format(key))
+        return opts
+
+    @staticmethod
     def read_queue_file(path):
-        """Parse and validate a queue file. Returns (items, rsync_opts or
-        None for the old opts-less format); raises ValueError/KeyError/
-        OSError. Nothing is applied, so a bad file changes nothing."""
+        """Parse and validate a queue file. Returns (items, rsync_opts,
+        rclone_opts), each opts None if the file doesn't set them; raises
+        ValueError/KeyError/OSError. Nothing is applied, so a bad file
+        changes nothing."""
         with open(path, "r") as f:
             data = json.load(f)
         if isinstance(data, list):
             # backward compatibility with the old (opts-less) format
-            return [QueueItem.from_dict(d) for d in data], None
+            return [QueueItem.from_dict(d) for d in data], None, None
         if not isinstance(data, dict):
             raise ValueError("not a queue file")
-        opts = data.get("rsync_opts", list(DEFAULT_RSYNC_OPTS))
-        if (not isinstance(opts, list) or not opts or
-                not all(isinstance(o, str) and "\0" not in o for o in opts)):
-            raise ValueError("invalid rsync_opts in queue file")
-        return [QueueItem.from_dict(d) for d in data.get("items", [])], opts
+        rsync_opts = App.check_opts(data, "rsync_opts")
+        rclone_opts = App.check_opts(data, "rclone_opts")
+        for flags, opts in ((RsyncFlags, rsync_opts), (RcloneFlags, rclone_opts)):
+            if opts is not None and flags.problems(opts):
+                raise ValueError("{0} flags in queue file: {1}".format(
+                    flags.TOOL, flags.problems(opts)))
+        return [QueueItem.from_dict(d) for d in data.get("items", [])], rsync_opts, rclone_opts
+
+    def confirm_file_opts(self, flags, opts):
+        """Ask whether to use a queue file's flags for flags.TOOL. Returns
+        opts, or None to keep the current ones."""
+        if opts is None or opts == self.opts_for(flags.TOOL):
+            return None
+        # Flags in a file are someone else's choice - show them in full,
+        # quoted, so a token with spaces can't disguise itself.
+        shown = " ".join(shlex.quote(o) for o in opts)
+        question = "This queue file also sets the {0} flags: {1} . ".format(flags.TOOL, shown)
+        risky = flags.risky(opts)
+        if risky:
+            question += ("WARNING - these can delete or overwrite data, write outside the "
+                         "target or run commands: {0} . ".format(
+                             " ".join(shlex.quote(o) for o in risky)))
+        unchecked = flags.unchecked(opts)
+        if unchecked:
+            question += ("CHECK - mcrsync doesn't know what these do (they could e.g. send "
+                         "data elsewhere): {0} . ".format(
+                             " ".join(shlex.quote(o) for o in unchecked)))
+        question += "Use these flags? (N = keep your current flags)"
+        return opts if confirm(self.stdscr, question) else None
 
     def load_queue_interactive(self, path):
         try:
-            items, opts = App.read_queue_file(path)
+            items, rsync_opts, rclone_opts = App.read_queue_file(path)
         except KeyError as e:
             message(self.stdscr, "Load failed: an item is missing the field {0}. "
                     "Nothing was loaded.".format(e))
@@ -2453,33 +3867,24 @@ class App(object):
         except (OSError, ValueError) as e:
             message(self.stdscr, "Load failed: {0}. Nothing was loaded.".format(e))
             return
-        use_opts = None
-        if opts is not None and opts != self.rsync_opts:
-            # Flags in a file are someone else's choice - show them in full,
-            # quoted, so a token with spaces can't disguise itself.
-            shown = " ".join(shlex.quote(o) for o in opts)
-            question = "This queue file also sets the rsync flags: {0} . ".format(shown)
-            risky = RsyncFlags.risky(opts)
-            if risky:
-                question += ("WARNING - these can delete or overwrite data or run commands: "
-                             "{0} . ".format(" ".join(shlex.quote(o) for o in risky)))
-            question += "Use these flags? (n = keep your current flags)"
-            if confirm(self.stdscr, question):
-                use_opts = opts
-        self.load_queue(items, use_opts)
+        use_rsync = self.confirm_file_opts(RsyncFlags, rsync_opts)
+        use_rclone = self.confirm_file_opts(RcloneFlags, rclone_opts)
+        self.load_queue(items, use_rsync, use_rclone)
         hosts = sorted(set(s.key() for it in self.queue for s in it.conn_specs()))
         extra = ""
         if hosts:
-            extra = (". It uses remote host(s) {0} - you'll be asked to log in "
+            extra = (". It uses remote(s) {0} - you'll be asked to log in "
                      "when you press F8.".format(", ".join(hosts)))
         message(self.stdscr, "Loaded {0} item(s) from {1}{2}".format(
             len(self.queue), path, extra))
 
-    def load_queue(self, items, rsync_opts=None):
+    def load_queue(self, items, rsync_opts=None, rclone_opts=None):
         self.queue = items
         self.queue_index = 0
         if rsync_opts is not None:
             self.rsync_opts = rsync_opts
+        if rclone_opts is not None:
+            self.rclone_opts = rclone_opts
         for item in self.queue:
             self.schedule_size_calc(item)
 
@@ -2503,7 +3908,8 @@ class App(object):
         self.running = True
         self.paused = False
         self.reconnect_needed = []
-        self.run_dry = RsyncFlags.is_dry_run(self.rsync_opts)
+        self.run_dry = any(FLAG_SETS[tool].is_dry_run(self.opts_for(tool))
+                           for tool in self.queue_tools())
         self.run_thread = threading.Thread(target=self._run_worker)
         self.run_thread.daemon = True
         self.run_thread.start()
@@ -2534,17 +3940,17 @@ class App(object):
                 if item.cancel_event.is_set():
                     break   # deleted from the queue while we were paused
                 # Reconnecting needs the terminal, which only the main thread
-                # may touch - so pause and let the user trigger it with p.
+                # may touch - so pause and let the user trigger it with P.
                 dead = self.registry.dead_specs(item.conn_specs())
                 if dead:
                     self.reconnect_needed = dead
                     self.paused = True
                     self.log("CONNECTION LOST: {0} - press P to log in again and resume".format(
-                        ", ".join(s.key() for s in dead)))
+                        self.registry.describe(dead)))
                     continue
                 self.queue_index = idx
                 self.log("Starting: {0} -> {1}".format(item.src_display(), item.dst_display()))
-                if self.runner.run_item(item, self.log, self.rsync_opts):
+                if self.runner.run_item(item, self.log, self.opts_for(item.tool())):
                     break
             self.log("Finished [{0}]: {1}".format(item.status, item.src_display()))
         self.running = False
@@ -2559,20 +3965,27 @@ class App(object):
             failed = self.registry.open_interactive(self.stdscr, self.reconnect_needed)
             if failed:
                 message(self.stdscr, "Still not connected to {0} - the run stays paused. "
-                        "Press P to try again.".format(", ".join(s.key() for s in failed)))
+                        "Press P to try again.".format(self.registry.describe(failed)))
                 return
             self.reconnect_needed = []
             self.reschedule_offline_sizes()
         self.paused = not self.paused
         self.log("PAUSED" if self.paused else "RESUMED")
 
-    def ensure_queue_connections(self):
-        """Log in to every host that unfinished queue items need. Returns
-        False (after telling the user) if any login failed."""
+    def pending_items(self):
+        return [it for it in self.queue if it.status != STATUS_OK]
+
+    def queue_tools(self):
+        """Tools the unfinished items use, rsync first."""
+        tools = set(it.tool() for it in self.pending_items())
+        return [t for t in (TOOL_RSYNC, TOOL_RCLONE) if t in tools]
+
+    def ensure_queue_connections(self, kinds=("ssh", "rclone")):
+        """Log in to every remote of these kinds that unfinished queue
+        items need. Returns False (after telling the user) if any failed."""
         specs = []
-        for it in self.queue:
-            if it.status != STATUS_OK:
-                specs += it.conn_specs()
+        for it in self.pending_items():
+            specs += [s for s in it.conn_specs() if s.kind in kinds]
         dead = self.registry.dead_specs(specs)
         if not dead:
             return True
@@ -2580,11 +3993,16 @@ class App(object):
         self.reschedule_offline_sizes()
         if failed:
             message(self.stdscr, "Could not connect to {0} - the run was not started.".format(
-                ", ".join(s.key() for s in failed)))
+                self.registry.describe(failed)))
             return False
         return True
 
     # ---------------- remote panes ----------------
+    # shown under the SSH / rclone choice
+    RCLONE_SETUP = ("rclone setup", (
+        "Install:   sudo -v ; curl https://rclone.org/install.sh | sudo bash",
+        "Configure: rclone config",
+    ))
     def pane_name(self, pane):
         return "SOURCE" if pane is self.left else "TARGET"
 
@@ -2595,17 +4013,111 @@ class App(object):
             self.connect_pane(pane)
 
     def connect_pane(self, pane):
+        """Pane rules: an SSH pane needs a local pane opposite (rsync can't
+        copy between two remote hosts, and rclone can't use mcrsync's SSH
+        login); an rclone pane can face a local or another rclone pane."""
         other = self.right if pane is self.left else self.left
-        if other.fs.is_remote:
-            message(self.stdscr, "The {0} pane is already connected to {1}. rsync can't copy "
-                    "between two remote hosts, so only one pane can be remote - press O in "
-                    "the {0} pane to disconnect it first.".format(
-                        self.pane_name(other), other.fs.spec.key()))
+        if other.fs.kind == "ssh":
+            message(self.stdscr, "The {0} pane is connected to {1} over SSH, so this pane must "
+                    "stay local: rsync can't copy between two remote hosts, and rclone can't "
+                    "use mcrsync's SSH login. Press O in the {0} pane to disconnect it "
+                    "first.".format(self.pane_name(other), other.fs.spec.key()))
             return
         if self.settings.error:
             message(self.stdscr, "Could not read saved connection settings ({0}). The form "
                     "starts empty and won't be saved until the file is fixed.".format(
                         self.settings.error))
+        if other.fs.kind == "rclone":
+            # SSH isn't possible opposite an rclone pane
+            self.connect_rclone_pane(pane)
+            return
+        last_kind = str(self.settings.section("last_connect").get("kind", "ssh"))
+        choice = pick_dialog(self.stdscr, "Connect {0} pane".format(self.pane_name(pane)),
+                             "Connect this pane to:",
+                             ["SSH host (copies with rsync)",
+                              "rclone remote (cloud storage, copies with rclone)"],
+                             1 if last_kind == "rclone" else 0, App.RCLONE_SETUP)
+        if choice is None:
+            return
+        kind = "rclone" if choice == 1 else "ssh"
+        self.settings.set_section("last_connect", OrderedDict([("kind", kind)]))
+        if kind == "rclone":
+            self.connect_rclone_pane(pane)
+        else:
+            self.connect_ssh_pane(pane)
+
+    def save_settings(self):
+        if not self.settings.error:
+            err = self.settings.save()
+            if err:
+                self.log(err)
+
+    def connect_rclone_pane(self, pane):
+        try:
+            with self.busy:
+                names = RcloneCli.list_remotes()
+        except FsError as e:
+            message(self.stdscr, "Can't use rclone: {0}".format(e))
+            return
+        usable = [n for n in names if RcloneSpec.NAME_RE.match(n)]
+        if not usable:
+            message(self.stdscr, "No usable rclone remotes{0}. Set one up with 'rclone config' "
+                    "first; mcrsync supports remote names made of letters, digits, _ and "
+                    "-.".format(" (found: " + ", ".join(names) + ")" if names else ""))
+            return
+        last = self.settings.section("last_rclone")
+        last_remote = str(last.get("remote", ""))
+        label = "Remote from your rclone config:"
+        if len(usable) < len(names):
+            label = "Remote (names with other characters than letters, digits, _ - are not shown):"
+        idx = pick_dialog(self.stdscr, "Connect {0} pane to rclone".format(self.pane_name(pane)),
+                          label, [n + ":" for n in usable],
+                          usable.index(last_remote) if last_remote in usable else 0)
+        if idx is None:
+            return
+        spec = RcloneSpec(usable[idx])
+        with self.busy:
+            err = self.registry.open_rclone(spec)
+        if err:
+            message(self.stdscr, "Can't use {0}: {1}".format(spec.key(), err))
+            return
+        fs = self.registry.fs_for(spec)
+        value = str(last.get("path", "")) if spec.remote == last_remote else ""
+        error = ""
+        while True:
+            result = form_dialog(self.stdscr, "Connect {0} pane to {1}:".format(
+                self.pane_name(pane), spec.remote), [
+                    ("Start path", value, "Folder to start in, e.g. bucket/photos. "
+                                          "Blank = top level."),
+                ], error)
+            if result is None:
+                return
+            value = result[0].strip()
+            try:
+                with self.busy:
+                    path = fs.resolve(value)
+                break
+            except ConnectionLost as e:
+                message(self.stdscr, str(e))
+                return
+            except FsError as e:
+                error = str(e)[:1].upper() + str(e)[1:]
+        self.settings.set_section("last_rclone", OrderedDict([
+            ("remote", spec.remote),
+            ("path", value),
+        ]))
+        self.save_settings()
+        pane.local_path = pane.path
+        pane.switch_fs(fs, path)
+        self.reschedule_offline_sizes()
+        self.log("Connected {0} pane to {1}".format(self.pane_name(pane), spec.key()))
+        if not fs.remote.modtime_ok:
+            message(self.stdscr, "Note: {0} can't store modification times. rclone's --update "
+                    "then compares with upload times, so 'newer on target' (and the conflicts "
+                    "it finds) isn't reliable for this remote. The F8 screen repeats this "
+                    "warning.".format(spec.key()))
+
+    def connect_ssh_pane(self, pane):
         last = self.settings.section("last_remote")
         try:
             local_user = getpass.getuser()
@@ -2642,20 +4154,19 @@ class App(object):
             ("base_path", values[3]),
             ("keyfile", spec.keyfile),
         ]))
-        if not self.settings.error:
-            err = self.settings.save()
-            if err:
-                self.log(err)
+        self.save_settings()
 
         if not self.registry.is_open(spec):
             if self.registry.open_interactive(self.stdscr, [spec]):
                 return
         fs = self.registry.fs_for(spec)
         try:
-            path = fs.resolve(values[3])
+            with self.busy:
+                path = fs.resolve(values[3])
         except FsError as e:
             try:
-                path = fs.resolve("")
+                with self.busy:
+                    path = fs.resolve("")
             except FsError as e2:
                 message(self.stdscr, "Connected, but can't list the remote home directory: "
                         "{0}".format(e2))
@@ -2693,11 +4204,19 @@ class App(object):
 
     def reconnect_panes_if_needed(self):
         for pane in (self.left, self.right):
-            if pane.fs.is_remote and not self.registry.is_open(pane.fs.spec):
-                if confirm(self.stdscr, "The connection to {0} is closed. Log in again?".format(
-                        pane.fs.spec.key())):
-                    self.registry.open_interactive(self.stdscr, [pane.fs.spec])
-                    self.reschedule_offline_sizes()
+            spec = pane.fs.spec
+            if spec is None or self.registry.is_open(spec):
+                continue
+            if spec.kind == "rclone":
+                question = "{0} isn't usable right now ({1}). Try again?".format(
+                    spec.key(), self.registry.problem(spec) or "not checked yet")
+            else:
+                question = "The connection to {0} is closed. Log in again?".format(spec.key())
+            if confirm(self.stdscr, question):
+                failed = self.registry.open_interactive(self.stdscr, [spec])
+                if failed and spec.kind == "rclone":
+                    message(self.stdscr, "Still not usable: " + self.registry.describe(failed))
+                self.reschedule_offline_sizes()
 
     # ---------------- verify data ----------------
     def verify_rows(self, tab_name):
@@ -2729,10 +4248,27 @@ class App(object):
     # ---------------- drawing ----------------
     # Below this the views' sub-windows can't be created (curses.error).
     MIN_W, MIN_H = 48, 15
+    NAV_QUEUE_H = 8     # the QUEUE box under the NAV panes
 
     def too_small(self):
         h, w = self.stdscr.getmaxyx()
         return h < App.MIN_H or w < App.MIN_W
+
+    def busy_cell(self):
+        """Where the busy spinner goes: the right end of the QUEUE box's
+        top border in NAV, else of the view's frame. (y, x of the corner,
+        free border cells between the title and the corner)."""
+        if self.too_small():
+            return None
+        h, w = self.stdscr.getmaxyx()
+        y = h - App.NAV_QUEUE_H - 1 if self.view == VIEW_NAV else 0
+        # one border cell is kept free after the title
+        return y, w - 1, max(0, w - 2 - getattr(self, "frame_title_end", 0))
+
+    def draw_frame_title(self, win, text, attr=curses.A_BOLD):
+        """Title on the top border the busy spinner shares."""
+        safe_addstr(win, 0, 2, text, attr)
+        self.frame_title_end = 2 + len(text)
 
     def draw_too_small(self, h, w):
         lines = ["Terminal too small",
@@ -2776,8 +4312,8 @@ class App(object):
     def draw_statusbar(self, h, w):
         if self.view == VIEW_NAV:
             pane = self.left if self.active == "left" else self.right
-            ssh_key = "O:disconnect SSH" if pane.fs.is_remote else "O:connect SSH"
-            help_text = ("?/H:help  Tab:switch  <-/->:nav  " + ssh_key + "  C:to queue"
+            remote_key = "O:disconnect" if pane.fs.is_remote else "O:connect"
+            help_text = ("?/H:help  Tab:switch  <-/->:nav  " + remote_key + "  C:to queue"
                           "  F2:rename  Ins:mkdir  F5:refresh  T:view queue  "
                           "V:verify  G:log  S:save  L:load  F8:run  P:pause  Q:quit")
         elif self.view == VIEW_QUEUE:
@@ -2859,7 +4395,7 @@ class App(object):
             safe_addstr(win, 2, 2, "(empty)", curses.A_DIM)
 
     def draw_nav(self, h, w):
-        bottom_h = 8
+        bottom_h = App.NAV_QUEUE_H
         pane_h = h - bottom_h - 1
         half = w // 2
         lwin = curses.newwin(pane_h, half, 0, 0)
@@ -2871,8 +4407,8 @@ class App(object):
 
         bwin = curses.newwin(bottom_h, w, pane_h, 0)
         bwin.border()
-        safe_addstr(bwin, 0, 2, " QUEUE (last 5) - {0} item(s) total ".format(len(self.queue)),
-                    curses.A_BOLD)
+        self.draw_frame_title(bwin, " QUEUE (last 5) - {0} item(s) total ".format(
+            len(self.queue)))
         tail = self.last_queue_tail(5)
         for i, it in enumerate(tail):
             n = len(self.queue) - len(tail) + i + 1
@@ -2916,7 +4452,7 @@ class App(object):
     def draw_queue(self, h, w):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
-        safe_addstr(win, 0, 2, " QUEUE EDITOR ", curses.A_BOLD)
+        self.draw_frame_title(win, " QUEUE EDITOR ")
 
         # Fixed-width columns: SIZE, #, then SOURCE/DEST split the rest
         # evenly, then STATUS. SIZE is right-justified (so "0.0 B" and
@@ -2995,13 +4531,14 @@ class App(object):
         title = " RUN LOG - {0} line(s){1}{2} ".format(
             len(lines), ", oldest dropped" if self.log_dropped else "",
             "" if self.log_scroll is None else " - scrolled, End: follow new lines")
-        safe_addstr(win, 0, 2, title, curses.A_BOLD)
+        self.draw_frame_title(win, title)
         for i in range(page_h):
             if scroll + i >= len(lines):
                 break
             line = lines[scroll + i]
             attr = 0
-            if "DELETED" in line or "CONNECTION LOST" in line or line[9:].startswith("rsync"):
+            if ("DELETED" in line or "CONNECTION LOST" in line or
+                    line[9:].startswith(("rsync", "rclone error"))):
                 attr = curses.color_pair(4)
             elif "CONFLICT" in line:
                 attr = curses.color_pair(5)
@@ -3038,7 +4575,7 @@ class App(object):
         tabs_line = "  ".join(
             ("[" + t + "]") if i == self.verify_tab else (" " + t + " ")
             for i, t in enumerate(VERIFY_TABS))
-        safe_addstr(win, 0, 2, " VERIFY: " + tabs_line + " ", curses.A_BOLD)
+        self.draw_frame_title(win, " VERIFY: " + tabs_line + " ")
         rows = self.verify_rows(VERIFY_TABS[self.verify_tab])
         safe_addstr(win, 1, 2, "SOURCE".ljust((w - 6) // 3) +
                     "TARGET".ljust((w - 6) // 3) + "REMARK", curses.A_UNDERLINE)
@@ -3064,62 +4601,125 @@ class App(object):
             safe_addstr(win, 3, 2, "(nothing in this category)", curses.A_DIM)
         win.noutrefresh()
 
+    def options_tools(self):
+        """The tools whose flags the F8 screen shows."""
+        return self.queue_tools() or [TOOL_RSYNC]
+
+    def options_rows(self):
+        """(tool, choice) for every checkbox on the F8 screen."""
+        return [(tool, choice) for tool in self.options_tools()
+                for choice in FLAG_SETS[tool].CHOICES]
+
+    def no_modtime_remotes(self):
+        """Keys of rclone remotes the queue uses that can't store
+        modification times (known once they were checked)."""
+        keys = []
+        for it in self.pending_items():
+            for spec in it.conn_specs():
+                if spec.kind == "rclone" and spec.key() not in keys:
+                    remote = self.registry.rclone_remote(spec)
+                    if remote.ready and not remote.modtime_ok:
+                        keys.append(spec.key())
+        return keys
+
+    def options_tail(self, text_w):
+        """(indent, text, attr) lines below the checkboxes: other flags,
+        the exact command and every warning, per tool."""
+        red = curses.color_pair(4) | curses.A_BOLD
+        tail = []
+        for tool in self.options_tools():
+            flags = FLAG_SETS[tool]
+            opts = self.opts_for(tool)
+            tail.append((2, "", 0))
+            others = " ".join(shlex.quote(o) for o in flags.others(opts)) or "(none)"
+            for i, line in enumerate(textwrap.wrap("{0} - other flags: {1}".format(tool, others),
+                                                   text_w, break_on_hyphens=False)):
+                tail.append((2 if i == 0 else 4, line, 0))
+            idx, cmd = self.options_preview_cmd(tool)
+            if idx is not None:
+                tail.append((2, "Command for item #{0} of {1} (other {2} items get their own "
+                                "paths):".format(idx + 1, len(self.queue), tool), curses.A_BOLD))
+                for line in textwrap.wrap(cmd, text_w, break_on_hyphens=False):
+                    tail.append((4, line, curses.A_REVERSE))
+            warnings = []
+            problem = flags.problems(opts)
+            if problem:
+                warnings.append(("CAN'T RUN: " + problem, red))
+            risky = flags.risky(opts)
+            if risky:
+                warnings.append(("CAUTION: these {0} flags can delete or overwrite data, write "
+                                 "outside the target or run commands: {1}".format(
+                                     tool, " ".join(risky)), red))
+            unchecked = flags.unchecked(opts)
+            if unchecked:
+                warnings.append(("CHECK: mcrsync doesn't know what these {0} flags do (they could "
+                                 "e.g. send data elsewhere): {1}".format(
+                                     tool, " ".join(unchecked)),
+                                 curses.color_pair(5) | curses.A_BOLD))
+            if tool == TOOL_RCLONE and flags.has(opts, "l", "--links"):
+                warnings.append(("Note: -l/--links is left out for copies INTO a local folder - "
+                                 "symlinks from a remote stay .rclonelink files there, so they "
+                                 "can't point outside the target.", 0))
+            if flags.is_dry_run(opts):
+                warnings.append(("DRY RUN (-n): nothing will be copied or created by {0}. Items "
+                                 "end up as DRY RUN OK / DRY RUN INCOMPLETE.".format(tool),
+                                 curses.color_pair(7) | curses.A_BOLD))
+            if not flags.has_update(opts):
+                warnings.append(("WARNING: -u/--update is NOT set for {0} - newer files in the "
+                                 "target could be overwritten!".format(tool), red))
+            if tool == TOOL_RCLONE:
+                for key in self.no_modtime_remotes():
+                    warnings.append(("WARNING: {0} can't store modification times - --update "
+                                     "compares with upload times there, so newer target files "
+                                     "may be overwritten or reported as conflicts "
+                                     "wrongly.".format(key), red))
+            for text, attr in warnings:
+                for i, line in enumerate(textwrap.wrap(text, text_w, break_on_hyphens=False)):
+                    tail.append((2 if i == 0 else 4, line, attr))
+        return tail
+
     def draw_options(self, h, w):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
-        title = " RSYNC OPTIONS - apply to ALL queued items "
-        safe_addstr(win, 0, 2, title, curses.A_BOLD)
-        text_w = max(10, w - 8)
-        opts = self.rsync_opts
+        self.draw_frame_title(win, " RUN OPTIONS - apply to ALL queued items of each tool ")
         red = curses.color_pair(4) | curses.A_BOLD
 
         # Command and warnings get their rows before the checkboxes: flags may
         # come from a loaded queue file, and a hidden one could be dangerous.
-        tail = []   # (indent, text, attr)
-        others = " ".join(shlex.quote(o) for o in RsyncFlags.others(opts)) or "(none)"
-        for i, line in enumerate(textwrap.wrap("Other flags: " + others, text_w,
-                                               break_on_hyphens=False)):
-            tail.append((2 if i == 0 else 4, line, 0))
-        tail.append((2, "", 0))
-        idx, cmd = self.options_preview_cmd()
-        tail.append((2, "Command for item #{0} of {1} (other items get their own paths):".format(
-            idx + 1, len(self.queue)), curses.A_BOLD))
-        for line in textwrap.wrap(cmd, text_w, break_on_hyphens=False):
-            tail.append((4, line, curses.A_REVERSE))
-        tail.append((2, "", 0))
-        risky = RsyncFlags.risky(opts)
-        if risky:
-            tail.append((2, "CAUTION: these flags can delete or overwrite data or run "
-                            "commands: " + " ".join(risky), red))
-        if RsyncFlags.is_dry_run(opts):
-            tail.append((2, "DRY RUN (-n): nothing will be copied or created. Items end up "
-                            "as DRY RUN OK / DRY RUN INCOMPLETE.",
-                         curses.color_pair(7) | curses.A_BOLD))
-        if not RsyncFlags.has_update(opts):
-            tail.append((2, "WARNING: -u/--update is NOT set - newer files in the target "
-                            "could be overwritten!", red))
+        tail = self.options_tail(max(10, w - 8))
 
-        # Checkboxes get the rows left over, scrolled to keep the cursor visible.
-        choices = RsyncFlags.CHOICES
-        list_h = max(1, min(len(choices), h - 7 - len(tail)))
-        self.options_index = max(0, min(self.options_index, len(choices) - 1))
-        scroll = max(0, self.options_index - list_h + 1)
-        safe_addstr(win, 2, 2, "Flags:", curses.A_UNDERLINE)
-        for i in range(list_h):
-            n = scroll + i
-            if n >= len(choices):
-                break
-            short, long_name, desc, is_risky = choices[n]
-            mark = "[x]" if RsyncFlags.has(opts, short, long_name) else "[ ]"
+        # Checkboxes (with a heading per tool) get the rows left over,
+        # scrolled to keep the cursor visible.
+        rows = self.options_rows()
+        self.options_index = max(0, min(self.options_index, len(rows) - 1))
+        lines = []      # (text, attr, row index or None)
+        tool = None
+        for n, (row_tool, choice) in enumerate(rows):
+            if row_tool != tool:
+                tool = row_tool
+                count = sum(1 for it in self.pending_items() if it.tool() == tool)
+                lines.append(("{0} flags ({1} item{2}):".format(
+                    tool, count, "" if count == 1 else "s"), curses.A_UNDERLINE, None))
+            flags = FLAG_SETS[row_tool]
+            short, long_name, desc, is_risky = choice
+            mark = "[x]" if flags.has(self.opts_for(row_tool), short, long_name) else "[ ]"
             name = "-{0}, {1}".format(short, long_name) if short else long_name
-            line = "{0} {1} {2:<20} {3}".format(">" if n == self.options_index else " ",
+            text = "{0} {1} {2:<20} {3}".format(">" if n == self.options_index else " ",
                                                 mark, name, desc)
             attr = red if is_risky else 0
             if n == self.options_index:
                 attr |= curses.A_REVERSE
-            safe_addstr(win, 3 + i, 2, line, attr)
+            lines.append((text, attr, n))
+        list_h = max(1, min(len(lines), h - 6 - len(tail)))
+        pos = next(i for i, l in enumerate(lines) if l[2] == self.options_index)
+        scroll = max(0, pos - list_h + 1)
+        for i in range(list_h):
+            if scroll + i >= len(lines):
+                break
+            text, attr, _ = lines[scroll + i]
+            safe_addstr(win, 2 + i, 2, text, attr)
 
-        y = 4 + list_h
+        y = 2 + list_h
         for indent, line, attr in tail:
             if y >= h - 3:
                 break
@@ -3131,33 +4731,37 @@ class App(object):
                     "[Enter] confirm & run   [Esc] cancel", curses.A_BOLD)
         win.noutrefresh()
 
-    def options_preview_cmd(self):
+    def options_preview_cmd(self, tool):
         """(queue index, shell-quoted command) of the first item a run
-        would copy."""
-        idx = next((i for i, it in enumerate(self.queue) if it.status != STATUS_OK), 0)
+        would copy with tool, or (None, "")."""
+        idx = next((i for i, it in enumerate(self.queue)
+                    if it.status != STATUS_OK and it.tool() == tool), None)
+        if idx is None:
+            return None, ""
         item = self.queue[idx]
         try:
-            cmd = self.runner.item_cmd(item, self.rsync_opts,
-                                       self.registry.fs_for(item.src_conn),
-                                       self.registry.fs_for(item.dst_conn))
+            cmd = self.runner.item_cmd(item, self.opts_for(tool))
         except FsError as e:
             return idx, "(no command: {0})".format(e)
         return idx, " ".join(shlex.quote(o) for o in cmd)
 
     def handle_options_key(self, c):
+        rows = self.options_rows()
+        tool, choice = rows[max(0, min(self.options_index, len(rows) - 1))]
+        flags = FLAG_SETS[tool]
         if c == curses.KEY_UP:
             self.options_index = max(0, self.options_index - 1)
         elif c == curses.KEY_DOWN:
-            self.options_index = min(len(RsyncFlags.CHOICES) - 1, self.options_index + 1)
+            self.options_index = min(len(rows) - 1, self.options_index + 1)
         elif c == ord(' '):
-            opts = RsyncFlags.toggle(self.rsync_opts, RsyncFlags.CHOICES[self.options_index])
+            opts = flags.toggle(self.opts_for(tool), choice)
             if opts:
-                self.rsync_opts = opts
+                self.set_opts(tool, opts)
             else:
                 flash(self.stdscr)
         elif c == ord('e'):
-            new_line = prompt_string(self.stdscr, "rsync flags:",
-                                      " ".join(shlex.quote(o) for o in self.rsync_opts))
+            new_line = prompt_string(self.stdscr, "{0} flags:".format(tool),
+                                      " ".join(shlex.quote(o) for o in self.opts_for(tool)))
             if new_line is None:
                 return
             try:
@@ -3168,27 +4772,40 @@ class App(object):
             if not parsed:
                 message(self.stdscr, "At least one flag is required - keeping previous options.")
                 return
-            self.rsync_opts = parsed
+            problem = flags.problems(parsed)
+            if problem:
+                message(self.stdscr, problem[:1].upper() + problem[1:] +
+                        " - keeping previous options.")
+                return
+            self.set_opts(tool, parsed)
         elif c == ord('d'):
-            if confirm(self.stdscr, "Restore default rsync flags?"):
-                self.rsync_opts = list(DEFAULT_RSYNC_OPTS)
+            if confirm(self.stdscr, "Restore default {0} flags ({1})?".format(
+                    tool, " ".join(flags.DEFAULTS))):
+                self.set_opts(tool, list(flags.DEFAULTS))
         elif c in (10, 13):
-            proceed = True
-            if not RsyncFlags.has_update(self.rsync_opts):
-                proceed = confirm(
-                    self.stdscr,
-                    "-u/--update is not set - newer target files may be "
-                    "overwritten. Continue anyway?")
-            if proceed and self.ensure_queue_connections():
-                self.view = VIEW_NAV
-                self.start_run()
+            self.confirm_and_run()
         elif c == 27:
             self.view = VIEW_NAV
+
+    def confirm_and_run(self):
+        for tool in self.queue_tools():
+            flags = FLAG_SETS[tool]
+            problem = flags.problems(self.opts_for(tool))
+            if problem:
+                message(self.stdscr, "Can't run: " + problem)
+                return
+            if not flags.has_update(self.opts_for(tool)) and not confirm(
+                    self.stdscr, "-u/--update is not set for {0} - newer target files may be "
+                    "overwritten. Continue anyway?".format(tool)):
+                return
+        if self.ensure_queue_connections():
+            self.view = VIEW_NAV
+            self.start_run()
 
     def draw_help(self, h, w):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
-        safe_addstr(win, 0, 2, " HELP (Esc/H/? to close) ", curses.A_BOLD)
+        self.draw_frame_title(win, " HELP (Esc/H/? to close) ")
         page_h = h - 4
         max_scroll = max(0, len(HELP_TEXT) - page_h)
         self.help_scroll = max(0, min(self.help_scroll, max_scroll))
@@ -3312,7 +4929,9 @@ class App(object):
                 message(self.stdscr, "Queue is empty.")
             elif self.running:
                 message(self.stdscr, "A run is already in progress.")
-            else:
+            elif self.ensure_queue_connections(kinds=("rclone",)):
+                # rclone remotes are checked first (no login needed), so the
+                # screen can warn about remotes without modification times
                 self.view = VIEW_OPTIONS
                 self.options_index = 0
         elif c == ord('p'):
@@ -3322,7 +4941,7 @@ class App(object):
     def handle_nav_key(self, c):
         pane = self.left if self.active == "left" else self.right
         h, w = self.stdscr.getmaxyx()
-        page_h = h - 8 - 4
+        page_h = h - App.NAV_QUEUE_H - 4
         if c == 9:  # Tab
             self.active = "right" if self.active == "left" else "left"
         elif c == curses.KEY_F5:
@@ -3384,12 +5003,16 @@ class App(object):
         old_full = pane.fs.pathmod.join(pane.path, old_name)
         new_full = pane.fs.pathmod.join(pane.path, new_name)
         try:
-            if pane.fs.exists(new_full):
-                message(self.stdscr, "'{0}' already exists - not overwriting.".format(new_name))
-                return
-            pane.fs.rename(old_full, new_full)
+            # no dialogs inside the busy block
+            with self.busy:
+                exists = pane.fs.exists(new_full)
+                if not exists:
+                    pane.fs.rename(old_full, new_full)
         except FsError as e:
             message(self.stdscr, "Rename failed: {0}".format(e))
+            return
+        if exists:
+            message(self.stdscr, "'{0}' already exists - not overwriting.".format(new_name))
             return
         pane.reload()
         for i, (name, _) in enumerate(pane.entries):
@@ -3412,12 +5035,15 @@ class App(object):
             return
         new_full = pane.fs.pathmod.join(pane.path, name)
         try:
-            if pane.fs.exists(new_full):
-                message(self.stdscr, "'{0}' already exists.".format(name))
-                return
-            pane.fs.mkdir(new_full)
+            with self.busy:
+                exists = pane.fs.exists(new_full)
+                if not exists:
+                    pane.fs.mkdir(new_full)
         except FsError as e:
             message(self.stdscr, "Create folder failed: {0}".format(e))
+            return
+        if exists:
+            message(self.stdscr, "'{0}' already exists.".format(name))
             return
         pane.reload()
         for i, (nm, _) in enumerate(pane.entries):
@@ -3494,7 +5120,8 @@ class App(object):
         if dead and self.registry.open_interactive(self.stdscr, dead):
             message(self.stdscr, "Not connected - nothing was changed.")
             return
-        ok, err = self.runner.resolve_conflict(it, c, action)
+        with self.busy:
+            ok, err = self.runner.resolve_conflict(it, c, action)
         if ok:
             message(self.stdscr, "Resolved {0}: {1}".format(c.relpath, c.remark))
             # if any conflicts remain unresolved, item stays INCOMPLETE

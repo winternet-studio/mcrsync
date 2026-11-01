@@ -620,10 +620,10 @@ class QueueFileTest(unittest.TestCase):
 
     def test_formats(self):
         self.write_json([{"src": "/a", "dst": "/b"}])
-        items, opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.App.read_queue_file(self.path)
         self.assertEqual((len(items), opts), (1, None))
         self.write_json({"rsync_opts": ["-a", "--delete"], "items": [{"src": "/a", "dst": "/b"}]})
-        items, opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.App.read_queue_file(self.path)
         self.assertEqual(opts, ["-a", "--delete"])
         for bad in ("[1, 2", "42", '"x"'):
             with open(self.path, "w") as f:
@@ -645,6 +645,7 @@ class QueueFileTest(unittest.TestCase):
             os.symlink(victim, os.path.join(self.tmp, name))
         app = m.App.__new__(m.App)
         app.rsync_opts = ["-a"]
+        app.rclone_opts = ["--update"]
         app.queue = [m.QueueItem("/a", "/b")]
         app.save_queue(self.path)
         s = m.Settings(os.path.join(self.tmp, "s.yaml"))
@@ -663,6 +664,7 @@ class QueueFileTest(unittest.TestCase):
         os.symlink(real, link)
         app = m.App.__new__(m.App)
         app.rsync_opts = ["-a"]
+        app.rclone_opts = ["--update"]
         app.queue = []
         app.save_queue(os.path.join(link, "q.json"))
         s = m.Settings(os.path.join(link, "s.yaml"))
@@ -672,10 +674,11 @@ class QueueFileTest(unittest.TestCase):
     def test_save_is_atomic(self):
         app = m.App.__new__(m.App)
         app.rsync_opts = ["-a"]
+        app.rclone_opts = ["--update"]
         app.queue = [m.QueueItem("/a", "/b")]
         app.save_queue(self.path)
         self.assertEqual(os.listdir(self.tmp), ["q.json"])
-        items, opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.App.read_queue_file(self.path)
         self.assertEqual(items[0].src, "/a")
 
 

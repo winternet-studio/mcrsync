@@ -31,6 +31,20 @@ services:
       keygen:
         condition: service_completed_successfully
 
+  # S3 object storage for the rclone tests (key test / secret testsecret)
+  rclone-s3:
+    build:
+      context: .
+      dockerfile: rclone-server/Dockerfile
+    command: ["serve", "s3", "/data", "--addr", ":9000", "--auth-key", "test,testsecret"]
+
+  # WebDAV without modification times, for the rclone --update warning
+  rclone-dav:
+    build:
+      context: .
+      dockerfile: rclone-server/Dockerfile
+    command: ["serve", "webdav", "/data", "--addr", ":8080"]
+
   client:
     build:
       context: .
@@ -40,11 +54,14 @@ services:
       - ..:/app:ro
     environment:
       MCRSYNC_TEST_HOSTS: "remote-alpine remote-debian"
+      MCRSYNC_TEST_RCLONE: "s3=http://rclone-s3:9000 dav=http://rclone-dav:8080"
     stdin_open: true
     tty: true
     depends_on:
       - remote-alpine
       - remote-debian
+      - rclone-s3
+      - rclone-dav
 
 volumes:
   keys:

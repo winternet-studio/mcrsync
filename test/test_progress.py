@@ -365,7 +365,7 @@ class AppProgressTextTest(unittest.TestCase):
         app = self.make_app()
         self.assertEqual(app.progress_text(), "Starting next item...")
         app.paused = True
-        self.assertIn("press p to resume", app.progress_text())
+        self.assertIn("press P to resume", app.progress_text())
         app.reconnect_needed = [m.ConnSpec("u", "h")]
         self.assertIn("connection lost", app.progress_text())
         app.paused = False
