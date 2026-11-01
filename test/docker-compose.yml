@@ -52,6 +52,7 @@ services:
     volumes:
       - keys:/keys:ro
       - ..:/app:ro
+      - ../screenshots:/screenshots
     environment:
       MCRSYNC_TEST_HOSTS: "remote-alpine remote-debian"
       MCRSYNC_TEST_RCLONE: "s3=http://rclone-s3:9000 dav=http://rclone-dav:8080"

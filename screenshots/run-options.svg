@@ -1,0 +1,293 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1036" height="598" viewBox="0 0 1036 598">
+<rect width="100%" height="100%" rx="8" fill="#1d1f21"/>
+<rect width="100%" height="30" rx="8" fill="#303235"/>
+<rect y="22" width="100%" height="8" fill="#303235"/>
+<circle cx="20" cy="15" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="15" r="6" fill="#febc2e"/>
+<circle cx="60" cy="15" r="6" fill="#28c840"/>
+<text x="518.0" y="19" fill="#a0a0a0" font-family="sans-serif" font-size="13" text-anchor="middle">mcrsync - run options (F8)</text>
+<g transform="translate(14,44)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="14">
+<rect x="16.8" y="54" width="630.0" height="18" fill="#d0d0d0"/>
+<rect x="33.6" y="324" width="932.4" height="18" fill="#d0d0d0"/>
+<rect x="33.6" y="342" width="924.0" height="18" fill="#d0d0d0"/>
+<rect x="33.6" y="360" width="806.4" height="18" fill="#d0d0d0"/>
+<rect x="33.6" y="378" width="386.4" height="18" fill="#d0d0d0"/>
+<rect x="0.0" y="522" width="999.6" height="18" fill="#4f7fd0"/>
+<path d="M4.2 9.0V18.0M4.2 9.0H8.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M8.4 9.0H16.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="13.5" textLength="453.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold"> RUN OPTIONS - apply to ALL queued items of each tool </text>
+<path d="M470.4 9.0H478.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M478.8 9.0H487.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M487.2 9.0H495.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M495.6 9.0H504.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M504.0 9.0H512.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M512.4 9.0H520.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M520.8 9.0H529.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M529.2 9.0H537.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M537.6 9.0H546.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M546.0 9.0H554.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M554.4 9.0H562.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M562.8 9.0H571.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M571.2 9.0H579.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M579.6 9.0H588.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M588.0 9.0H596.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M596.4 9.0H604.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M604.8 9.0H613.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M613.2 9.0H621.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M621.6 9.0H630.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M630.0 9.0H638.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M638.4 9.0H646.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M646.8 9.0H655.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M655.2 9.0H663.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M663.6 9.0H672.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M672.0 9.0H680.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M680.4 9.0H688.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M688.8 9.0H697.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M697.2 9.0H705.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M705.6 9.0H714.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M714.0 9.0H722.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M722.4 9.0H730.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M730.8 9.0H739.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M739.2 9.0H747.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M747.6 9.0H756.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M756.0 9.0H764.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M764.4 9.0H772.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M772.8 9.0H781.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M781.2 9.0H789.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M789.6 9.0H798.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M798.0 9.0H806.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M806.4 9.0H814.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M814.8 9.0H823.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M823.2 9.0H831.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M831.6 9.0H840.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M840.0 9.0H848.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M848.4 9.0H856.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M856.8 9.0H865.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M865.2 9.0H873.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M873.6 9.0H882.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M882.0 9.0H890.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M890.4 9.0H898.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M898.8 9.0H907.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M907.2 9.0H915.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M915.6 9.0H924.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M924.0 9.0H932.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M932.4 9.0H940.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M940.8 9.0H949.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M949.2 9.0H957.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M957.6 9.0H966.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M966.0 9.0H974.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M974.4 9.0H982.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M982.8 9.0H991.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M991.2 9.0H999.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 9.0V18.0M999.6 9.0H1003.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 18.0V36.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 18.0V36.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="49.5" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" text-decoration="underline">rsync flags (3 items):</text>
+<path d="M1003.8 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="67.5" textLength="630.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">&gt; [x] -a, --archive        Archive mode (recurse, perms, times, links, ...)</text>
+<path d="M1003.8 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="85.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] -u, --update         Skip files that are newer on the target (safety net)                                      </text>
+<path d="M1003.8 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="103.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -n, --dry-run        Show what would happen, change nothing                                                    </text>
+<path d="M1003.8 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 108.0V126.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="121.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -z, --compress       Compress data during transfer                                                             </text>
+<path d="M1003.8 108.0V126.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 126.0V144.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="139.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -c, --checksum       Compare by checksum, not size + time (slow)                                               </text>
+<path d="M1003.8 126.0V144.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 144.0V162.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="157.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -H, --hard-links     Preserve hard links                                                                       </text>
+<path d="M1003.8 144.0V162.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 162.0V180.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="175.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -A, --acls           Preserve ACLs                                                                             </text>
+<path d="M1003.8 162.0V180.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 180.0V198.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="193.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -X, --xattrs         Preserve extended attributes                                                              </text>
+<path d="M1003.8 180.0V198.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 198.0V216.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="211.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] --partial            Keep partially copied files (resume big files)                                            </text>
+<path d="M1003.8 198.0V216.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 216.0V234.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="229.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] --stats              Transfer statistics (fills the Verify view)                                               </text>
+<path d="M1003.8 216.0V234.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 234.0V252.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="247.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] --itemize-changes    Per-file change list                                                                      </text>
+<path d="M1003.8 234.0V252.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 252.0V270.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="265.5" textLength="604.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#cc4b4b" font-weight="bold">  [ ] --delete             Delete target files that aren&#x27;t in the source</text>
+<path d="M1003.8 252.0V270.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 270.0V288.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 270.0V288.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 288.0V306.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="301.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0"> rsync - Other flags: --bwlimit=1500                                                                                  </text>
+<path d="M1003.8 288.0V306.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 306.0V324.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="319.5" textLength="546.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold">Command for item #1 of 3 (other rsync items get their own paths):</text>
+<path d="M1003.8 306.0V324.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 324.0V342.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="33.6" y="337.5" textLength="932.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">rsync -a -u --stats --itemize-changes --bwlimit=1500 --info=skip1,progress2,name2 &#x27;--out-format=%i %l %n&#x27; -s -e</text>
+<path d="M1003.8 324.0V342.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 342.0V360.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="33.6" y="355.5" textLength="924.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">&#x27;ssh -p 2222 -o ControlPath=/tmp/mcrsync-k3kil3b7/0.sock -o ServerAliveInterval=30 -o ServerAliveCountMax=4 -i</text>
+<path d="M1003.8 342.0V360.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 360.0V378.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="33.6" y="373.5" textLength="806.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/root/.ssh/id_test -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=15&#x27; -- /volume1/video/</text>
+<path d="M1003.8 360.0V378.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 378.0V396.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="33.6" y="391.5" textLength="386.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">keyuser@backup-nas:/home/keyuser/backup/video/</text>
+<path d="M1003.8 378.0V396.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 396.0V414.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 396.0V414.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 414.0V432.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 414.0V432.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 432.0V450.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 432.0V450.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 450.0V468.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 450.0V468.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 468.0V486.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 468.0V486.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 486.0V504.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="16.8" y="499.5" textLength="730.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold">[Space] Toggle   [E] Edit as text   [D] Defaults   [Enter] Confirm &amp; run   [Esc] Cancel</text>
+<path d="M1003.8 486.0V504.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M4.2 504.0V513.0M4.2 513.0H8.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M8.4 513.0H16.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M16.8 513.0H25.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M25.2 513.0H33.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M33.6 513.0H42.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M42.0 513.0H50.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M50.4 513.0H58.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M58.8 513.0H67.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M67.2 513.0H75.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M75.6 513.0H84.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M84.0 513.0H92.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M92.4 513.0H100.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M100.8 513.0H109.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M109.2 513.0H117.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M117.6 513.0H126.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M126.0 513.0H134.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M134.4 513.0H142.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M142.8 513.0H151.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M151.2 513.0H159.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M159.6 513.0H168.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M168.0 513.0H176.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M176.4 513.0H184.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M184.8 513.0H193.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M193.2 513.0H201.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M201.6 513.0H210.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M210.0 513.0H218.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M218.4 513.0H226.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M226.8 513.0H235.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M235.2 513.0H243.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M243.6 513.0H252.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M252.0 513.0H260.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M260.4 513.0H268.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M268.8 513.0H277.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M277.2 513.0H285.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M285.6 513.0H294.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M294.0 513.0H302.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M302.4 513.0H310.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M310.8 513.0H319.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M319.2 513.0H327.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M327.6 513.0H336.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M336.0 513.0H344.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M344.4 513.0H352.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M352.8 513.0H361.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M361.2 513.0H369.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M369.6 513.0H378.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M378.0 513.0H386.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M386.4 513.0H394.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M394.8 513.0H403.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M403.2 513.0H411.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M411.6 513.0H420.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M420.0 513.0H428.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M428.4 513.0H436.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M436.8 513.0H445.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M445.2 513.0H453.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M453.6 513.0H462.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M462.0 513.0H470.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M470.4 513.0H478.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M478.8 513.0H487.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M487.2 513.0H495.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M495.6 513.0H504.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M504.0 513.0H512.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M512.4 513.0H520.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M520.8 513.0H529.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M529.2 513.0H537.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M537.6 513.0H546.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M546.0 513.0H554.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M554.4 513.0H562.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M562.8 513.0H571.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M571.2 513.0H579.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M579.6 513.0H588.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M588.0 513.0H596.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M596.4 513.0H604.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M604.8 513.0H613.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M613.2 513.0H621.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M621.6 513.0H630.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M630.0 513.0H638.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M638.4 513.0H646.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M646.8 513.0H655.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M655.2 513.0H663.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M663.6 513.0H672.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M672.0 513.0H680.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M680.4 513.0H688.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M688.8 513.0H697.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M697.2 513.0H705.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M705.6 513.0H714.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M714.0 513.0H722.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M722.4 513.0H730.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M730.8 513.0H739.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M739.2 513.0H747.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M747.6 513.0H756.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M756.0 513.0H764.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M764.4 513.0H772.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M772.8 513.0H781.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M781.2 513.0H789.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M789.6 513.0H798.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M798.0 513.0H806.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M806.4 513.0H814.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M814.8 513.0H823.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M823.2 513.0H831.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M831.6 513.0H840.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M840.0 513.0H848.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M848.4 513.0H856.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M856.8 513.0H865.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M865.2 513.0H873.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M873.6 513.0H882.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M882.0 513.0H890.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M890.4 513.0H898.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M898.8 513.0H907.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M907.2 513.0H915.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M915.6 513.0H924.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M924.0 513.0H932.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M932.4 513.0H940.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M940.8 513.0H949.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M949.2 513.0H957.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M957.6 513.0H966.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M966.0 513.0H974.4" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M974.4 513.0H982.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M982.8 513.0H991.2" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M991.2 513.0H999.6" stroke="#d0d0d0" stroke-width="1.2"/>
+<path d="M1003.8 504.0V513.0M999.6 513.0H1003.8" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="0.0" y="535.5" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">?/H</text>
+<text x="25.2" y="535.5" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:help  </text>
+<text x="84.0" y="535.5" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Up/Down</text>
+<text x="142.8" y="535.5" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:move  </text>
+<text x="201.6" y="535.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Space</text>
+<text x="243.6" y="535.5" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:toggle  </text>
+<text x="319.2" y="535.5" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">E</text>
+<text x="327.6" y="535.5" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:edit as text  </text>
+<text x="453.6" y="535.5" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">D</text>
+<text x="462.0" y="535.5" textLength="92.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:defaults  </text>
+<text x="554.4" y="535.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Enter</text>
+<text x="596.4" y="535.5" textLength="117.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:confirm&amp;run  </text>
+<text x="714.0" y="535.5" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Esc</text>
+<text x="739.2" y="535.5" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:cancel  </text>
+<text x="814.8" y="535.5" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Q</text>
+<text x="823.2" y="535.5" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:quit                </text>
+</g></svg>

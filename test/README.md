@@ -41,6 +41,16 @@ In Git Bash on Windows, prefix the `run` command with `MSYS_NO_PATHCONV=1`, or `
 
 Outside the rig (no `MCRSYNC_TEST_HOSTS`), only the local tests run; the rclone tests that don't need the S3/WebDAV servers run whenever `rclone` is installed.
 
+## Screenshots
+
+`screenshots.py` regenerates the SVG screenshots in `screenshots/` used by the main README: it builds demo data, drives the real UI through tmux and renders each screen. Run it after UI changes:
+
+```bash
+docker compose run --rm -T -w /tmp client python3 /app/test/screenshots.py
+```
+
+To add or change a shot, edit the `Scenes` class.
+
 ## Manual checks
 
 Things the automated tests can't judge, like readability and layout on your own terminal:

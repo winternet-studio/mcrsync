@@ -4,6 +4,8 @@ A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude
 
 `mcrsync` provides a visual, dual-pane terminal interface for building, editing, and executing large batches of `rsync` file transfers. It was originally designed for managing localized backup routines on older Network Attached Storage (NAS) hardware, offering modern convenience while maintaining legacy compatibility.
 
+![mcrsync with source and target panes and a queue](screenshots/nav.svg)
+
 ## Install and use
 
 It's a single file. Download it and run it:
@@ -30,6 +32,25 @@ Pick a file or folder in the left pane, go to the destination in the right pane,
 * **Any file name:** Names with spaces, quotes, newlines, non-ASCII characters or a leading `-` or `.` work locally and remotely.
 
 See [Safety](#safety) for the full list of safeguards.
+
+## Screenshots
+
+Pushing to a NAS over SSH:
+
+![SSH remote pane](screenshots/ssh.svg)
+
+Connecting a pane (`O`) and copying to S3 with rclone:
+
+![Connect a pane](screenshots/connect.svg)
+![rclone pane](screenshots/rclone.svg)
+
+Run options (`F8`), live progress and the run log (`G`):
+
+![Run options](screenshots/run-options.svg)
+![Live progress](screenshots/progress.svg)
+![Run log](screenshots/run-log.svg)
+
+To update the screenshots, see [test/README.md](test/README.md#screenshots).
 
 ---
 

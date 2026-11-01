@@ -4047,7 +4047,7 @@ class App(object):
         choice = pick_dialog(self.stdscr, "Connect {0} pane".format(self.pane_name(pane)),
                              "Connect this pane to:",
                              ["SSH host (copies with rsync)",
-                              "rclone remote (cloud storage, copies with rclone)"],
+                              "rclone remote (copies with rclone)"],
                              1 if last_kind == "rclone" else 0, App.RCLONE_SETUP)
         if choice is None:
             return
