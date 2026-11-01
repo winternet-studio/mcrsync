@@ -1,8 +1,19 @@
 # mcrsync
 
-A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude; originally by JRPdata. Since the original version remote SSH and `rclone` support has been added, including a test suite.
+A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude; originally by JRPdata. Since the original version, remote SSH and `rclone` support has been added, including a test suite. Also inspired by the [Total Commander](https://ghisler.com) application for Windows.
 
 `mcrsync` provides a visual, dual-pane terminal interface for building, editing, and executing large batches of `rsync` file transfers. It was originally designed for managing localized backup routines on older Network Attached Storage (NAS) hardware, offering modern convenience while maintaining legacy compatibility.
+
+## Install and use
+
+It's a single file. Download it and run it:
+
+```bash
+curl -O https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py
+python3 mcrsync.py
+```
+
+Pick a file or folder in the left pane, go to the destination in the right pane, press `C` to queue it, then `F8` and `Enter` to run. Press `H` for help. See [Example Workflow](#example-workflow) for more.
 
 ## Features
 
