@@ -136,10 +136,10 @@ class RcloneQueueItemTest(unittest.TestCase):
                 with open(path, "w") as f:
                     json.dump({"rclone_opts": bad, "items": [item]}, f)
                 with self.assertRaises(ValueError, msg=repr(bad)):
-                    m.App.read_queue_file(path)
+                    m.QueueFile.read(path)
             with open(path, "w") as f:
                 json.dump({"rclone_opts": ["--update", "--exclude=*.tmp"], "items": [item]}, f)
-            items, rsync_opts, rclone_opts = m.App.read_queue_file(path)
+            items, rsync_opts, rclone_opts = m.QueueFile.read(path)
             self.assertEqual((rsync_opts, rclone_opts), (None, ["--update", "--exclude=*.tmp"]))
             self.assertEqual(items[0].dst_display(), "b2:/b")
         finally:

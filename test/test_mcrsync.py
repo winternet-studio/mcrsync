@@ -134,10 +134,21 @@ class QueueItemTest(unittest.TestCase):
         self.assertEqual(back.dst_display(), "h:/dst")
 
     def test_old_format(self):
-        back = m.QueueItem.from_dict({"src": "/a", "dst": "/b", "status": m.STATUS_OK})
+        # version 1 stored the display label as status
+        back = m.QueueItem.from_dict({"src": "/a", "dst": "/b", "status": "SYNCED OK"})
         self.assertIsNone(back.src_conn)
         self.assertIsNone(back.dst_conn)
         self.assertEqual(back.status, m.STATUS_OK)
+
+    def test_status_saved_as_id(self):
+        it = m.QueueItem("/a", "/b")
+        it.status = m.STATUS_FAIL
+        self.assertEqual(it.to_dict()["status"], "fail")
+        self.assertEqual(it.status_label(), "SYNC FAIL")
+
+    def test_unknown_status_rejected(self):
+        with self.assertRaises(ValueError):
+            m.QueueItem.from_dict({"src": "/a", "dst": "/b", "status": "bogus"})
 
 
 def make_tree(root):

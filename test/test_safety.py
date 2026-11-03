@@ -616,25 +616,34 @@ class QueueFileTest(unittest.TestCase):
         for opts in ("-a", [], ["-a", 5], ["-a\0"], None):
             self.write_json({"rsync_opts": opts, "items": []})
             with self.assertRaises(ValueError, msg=repr(opts)):
-                m.App.read_queue_file(self.path)
+                m.QueueFile.read(self.path)
 
     def test_formats(self):
         self.write_json([{"src": "/a", "dst": "/b"}])
-        items, opts, rclone_opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.QueueFile.read(self.path)
         self.assertEqual((len(items), opts), (1, None))
         self.write_json({"rsync_opts": ["-a", "--delete"], "items": [{"src": "/a", "dst": "/b"}]})
-        items, opts, rclone_opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.QueueFile.read(self.path)
         self.assertEqual(opts, ["-a", "--delete"])
         for bad in ("[1, 2", "42", '"x"'):
             with open(self.path, "w") as f:
                 f.write(bad)
             with self.assertRaises((ValueError, KeyError, TypeError, AttributeError), msg=bad):
-                m.App.read_queue_file(self.path)
+                m.QueueFile.read(self.path)
+
+    def test_version(self):
+        m.QueueFile.save(self.path, [m.QueueItem("/a", "/b")], ["-a"], ["--update"])
+        with open(self.path) as f:
+            self.assertEqual(json.load(f)["version"], m.QueueFile.VERSION)
+        for version in (m.QueueFile.VERSION + 1, 0, "2", True):
+            self.write_json({"version": version, "items": []})
+            with self.assertRaises(ValueError, msg=repr(version)):
+                m.QueueFile.read(self.path)
 
     def test_one_bad_item_rejects_whole_file(self):
         self.write_json({"items": [{"src": "/a", "dst": "/b"}, {"src": "rel", "dst": "/b"}]})
         with self.assertRaises(ValueError):
-            m.App.read_queue_file(self.path)
+            m.QueueFile.read(self.path)
 
     def test_planted_symlink_at_temp_name_not_followed(self):
         # Another user pre-creates the old predictable temp names as
@@ -652,7 +661,7 @@ class QueueFileTest(unittest.TestCase):
         s.data["a"] = 1
         self.assertEqual(s.save(), "")
         self.assertEqual(read(victim), "precious")
-        self.assertEqual(m.App.read_queue_file(self.path)[0][0].src, "/a")
+        self.assertEqual(m.QueueFile.read(self.path)[0][0].src, "/a")
         self.assertEqual(sorted(os.listdir(self.tmp)),
                          ["q.json", "q.json.tmp", "s.yaml", "s.yaml.tmp", "victim"])
 
@@ -678,7 +687,7 @@ class QueueFileTest(unittest.TestCase):
         app.queue = [m.QueueItem("/a", "/b")]
         app.save_queue(self.path)
         self.assertEqual(os.listdir(self.tmp), ["q.json"])
-        items, opts, rclone_opts = m.App.read_queue_file(self.path)
+        items, opts, rclone_opts = m.QueueFile.read(self.path)
         self.assertEqual(items[0].src, "/a")
 
 

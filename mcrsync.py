@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-mcrsync.py - A Midnight-Commander-style rsync queue manager.
+mcrsync.py - A Midnight-Commander-style rsync/rclone queue manager.
 
 Targets Python 3.4 (Synology chroot). Avoids f-strings, subprocess.run,
 os.scandir and other 3.5+-only features on purpose.
@@ -9,33 +8,9 @@ os.scandir and other 3.5+-only features on purpose.
 Either pane can be switched to a remote SSH host (key O); rsync then runs
 over a shared ssh ControlMaster connection. A pane can also show an rclone
 remote (cloud/object storage from the user's own rclone config); items
-involving one are copied with rclone instead of rsync. See HELP_TEXT.
+involving one are copied with rclone instead of rsync.
 
-Views:
-  NAV    - left (source) / right (target) file panes + last-5 queue tail
-  QUEUE  - full-screen queue editor (#, source, dest, status)
-  VERIFY - post-run report: COPIED / SKIPPED / RENAMED / ERRORS tabs
-
-Keys (NAV + QUEUE unless noted):
-  Tab        Toggle left/right pane        (NAV only)
-  Left/Bksp  Go to parent dir              (NAV only)
-  Home/End   Jump to first/last item       (NAV only)
-  Right/Ent  Enter directory               (NAV only)
-  O          Connect active pane to SSH / rclone, or disconnect it (NAV only)
-  C          Queue copy of selected item in LEFT pane -> current RIGHT dir
-  T          Toggle NAV <-> QUEUE view
-  V          Open VERIFY view (after a run, or to inspect last run)
-  S          Save queue to a .json file
-  L          Load queue from a .json file
-  F8         Execute the queue
-  P          Pause / resume execution
-  PgUp/PgDn  Scroll active pane / list
-  Q          Quit (confirm)
-
-In VERIFY view:
-  Tab        Cycle COPIED / SKIPPED / RENAMED / ERRORS
-  Enter      (On a SKIPPED "conflict" row) resolve: Skip / Rename / Autorename
-  Esc / V    Back to previous view
+Views and keys are documented in HELP_TEXT.
 """
 
 import curses
@@ -71,18 +46,29 @@ TOOL_RCLONE = "rclone"
 # Data model
 # ----------------------------------------------------------------------
 
-STATUS_PENDING = "NOT SYNCED"
-STATUS_RUNNING = "IN PROGRESS"
-STATUS_OK = "SYNCED OK"
-STATUS_FAIL = "SYNC FAIL"
-STATUS_INCOMPLETE = "INCOMPLETE"
+STATUS_PENDING = "pending"
+STATUS_RUNNING = "running"
+STATUS_OK = "ok"
+STATUS_FAIL = "fail"
+STATUS_INCOMPLETE = "incomplete"
 # Dry-run results must not look like SYNCED OK, or a later real run would
 # skip those items.
-STATUS_DRY_OK = "DRY RUN OK"
-STATUS_DRY_INCOMPLETE = "DRY RUN INCOMPLETE"
+STATUS_DRY_OK = "dry_ok"
+STATUS_DRY_INCOMPLETE = "dry_incomplete"
+
+# Queue files store the ids above; these are only for display.
+STATUS_LABELS = {
+    STATUS_PENDING: "NOT SYNCED",
+    STATUS_RUNNING: "IN PROGRESS",
+    STATUS_OK: "SYNCED OK",
+    STATUS_FAIL: "SYNC FAIL",
+    STATUS_INCOMPLETE: "INCOMPLETE",
+    STATUS_DRY_OK: "DRY RUN OK",
+    STATUS_DRY_INCOMPLETE: "DRY RUN INCOMPLETE",
+}
 
 
-class Conflict(object):
+class Conflict:
     """A file that exists in both source and dest, dest is newer. Paths are
     on the item's source/dest side (local or remote)."""
     def __init__(self, relpath, src_full, dst_full, dry_run=False):
@@ -97,7 +83,7 @@ class Conflict(object):
             self.remark = "target newer - needs attention"
 
 
-class ConnSpec(object):
+class ConnSpec:
     """Identifies a remote SSH endpoint. Never holds a password - ssh asks
     for that itself when the connection is opened.
 
@@ -112,9 +98,9 @@ class ConnSpec(object):
 
     def __init__(self, user, host, port=22, keyfile=""):
         if not isinstance(user, str) or not ConnSpec.NAME_RE.match(user):
-            raise ValueError("invalid user name {0!r} (letters, digits, . _ - only)".format(user))
+            raise ValueError("invalid user name {!r} (letters, digits, . _ - only)".format(user))
         if not isinstance(host, str) or not ConnSpec.NAME_RE.match(host):
-            raise ValueError("invalid host {0!r} (host name or IPv4 address)".format(host))
+            raise ValueError("invalid host {!r} (host name or IPv4 address)".format(host))
         try:
             port = int(port)
         except (TypeError, ValueError):
@@ -143,17 +129,17 @@ class ConnSpec(object):
         if ":" in host:
             return None, "IPv6 addresses aren't supported - use a host name."
         if keyfile and not os.path.isfile(os.path.expanduser(keyfile)):
-            return None, "Key file not found: {0}".format(keyfile)
+            return None, "Key file not found: {}".format(keyfile)
         try:
             return ConnSpec(user, host, port or "22", keyfile), ""
         except ValueError as e:
             return None, str(e)[0].upper() + str(e)[1:] + "."
 
     def key(self):
-        return "{0}@{1}:{2}".format(self.user, self.host, self.port)
+        return "{}@{}:{}".format(self.user, self.host, self.port)
 
     def display_path(self, path):
-        return "{0}:{1}".format(self.host, path)
+        return "{}:{}".format(self.host, path)
 
     def to_dict(self):
         return {
@@ -171,7 +157,7 @@ class ConnSpec(object):
         return ConnSpec(d["user"], d["host"], d.get("port", 22), d.get("keyfile", ""))
 
 
-class RcloneSpec(object):
+class RcloneSpec:
     """Identifies a remote from the user's own rclone config, by name only:
     mcrsync never reads or stores its credentials.
 
@@ -185,7 +171,7 @@ class RcloneSpec(object):
 
     def __init__(self, remote):
         if not isinstance(remote, str) or not RcloneSpec.NAME_RE.match(remote):
-            raise ValueError("invalid rclone remote name {0!r} (letters, digits, _ - only)".format(
+            raise ValueError("invalid rclone remote name {!r} (letters, digits, _ - only)".format(
                 remote))
         self.remote = remote
 
@@ -193,13 +179,13 @@ class RcloneSpec(object):
         return "rclone:" + self.remote
 
     def display_path(self, path):
-        return "{0}:{1}".format(self.remote, path)
+        return "{}:{}".format(self.remote, path)
 
     def arg(self, path):
         """rclone's 'remote:path' argument. Paths are kept absolute ('/'
         first) - local and sftp backends would read anything else relative
         to the current or home directory."""
-        return "{0}:{1}".format(self.remote, path)
+        return "{}:{}".format(self.remote, path)
 
     def to_dict(self):
         return {"type": "rclone", "remote": self.remote}
@@ -211,13 +197,13 @@ def conn_from_dict(d):
     if not d:
         return None
     if not isinstance(d, dict):
-        raise ValueError("invalid connection in queue: {0!r}".format(d))
+        raise ValueError("invalid connection in queue: {!r}".format(d))
     kind = d.get("type", "ssh")
     if kind == "ssh":
         return ConnSpec.from_dict(d)
     if kind == "rclone":
         return RcloneSpec(d["remote"])
-    raise ValueError("unknown connection type in queue: {0!r}".format(kind))
+    raise ValueError("unknown connection type in queue: {!r}".format(kind))
 
 
 def format_size_si(n_bytes):
@@ -230,8 +216,8 @@ def format_size_si(n_bytes):
     for factor, suffix in ((1024.0 ** 4, "T"), (1024.0 ** 3, "G"),
                             (1024.0 ** 2, "M"), (1024.0, "K")):
         if n >= factor:
-            return "%3.1f %s" % (n / factor, suffix)
-    return "%3.1f %s" % (n, "B")
+            return "{:3.1f} {}".format(n / factor, suffix)
+    return "{:3.1f} B".format(n)
 
 
 def format_duration(total_seconds):
@@ -245,10 +231,10 @@ def format_duration(total_seconds):
     mins, _ = divmod(rem, 60)
     parts = []
     if days:
-        parts.append("%dd" % days)
+        parts.append("{}d".format(days))
     if days or hours:
-        parts.append("%dh" % hours)
-    parts.append("%dm" % mins)
+        parts.append("{}h".format(hours))
+    parts.append("{}m".format(mins))
     return " ".join(parts)
 
 
@@ -272,7 +258,9 @@ def atomic_write(target, text):
         raise
 
 
-class QueueItem(object):
+class QueueItem:
+    STATUS_BY_LABEL = {label: status for status, label in STATUS_LABELS.items()}
+
     def __init__(self, src, dst, is_dir=True, src_conn=None, dst_conn=None):
         self.src = src
         self.dst = dst
@@ -283,10 +271,6 @@ class QueueItem(object):
         self.status = STATUS_PENDING
         self.conflicts = []          # list[Conflict]
         self.copied_files = 0
-        self.copied_dirs = 0
-        self.skipped_files = 0
-        self.skipped_dirs = 0
-        self.bytes_transferred = 0
         self.error_text = ""
         self.copied_list = []        # list of (src, dst, remark)
         self.errors_list = []        # list of (src, dst, remark)
@@ -324,6 +308,9 @@ class QueueItem(object):
         path = self.dst if path is None else path
         return self.dst_conn.display_path(path) if self.dst_conn else path
 
+    def status_label(self):
+        return STATUS_LABELS[self.status]
+
     def to_dict(self):
         return {
             "src": self.src,
@@ -342,7 +329,7 @@ class QueueItem(object):
         """Queue paths are always absolute; this also guarantees rsync can
         never read one as an option or a host:path spec."""
         if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
-            raise ValueError("invalid path in queue: {0!r} (must be absolute)".format(path))
+            raise ValueError("invalid path in queue: {!r} (must be absolute)".format(path))
         return path
 
     @staticmethod
@@ -350,16 +337,21 @@ class QueueItem(object):
         QueueItem.check_path(d["src"])
         QueueItem.check_path(d["dst"])
         if not isinstance(d.get("is_dir", True), bool):
-            raise ValueError("invalid is_dir in queue: {0!r}".format(d.get("is_dir")))
+            raise ValueError("invalid is_dir in queue: {!r}".format(d.get("is_dir")))
         src_conn = conn_from_dict(d.get("src_conn"))
         dst_conn = conn_from_dict(d.get("dst_conn"))
         # the same combinations the UI allows - see App.pane_conflict
         kinds = sorted(s.kind for s in (src_conn, dst_conn) if s is not None)
         if kinds in (["ssh", "ssh"], ["rclone", "ssh"]):
-            raise ValueError("invalid item in queue: {0} can't be combined".format(
+            raise ValueError("invalid item in queue: {} can't be combined".format(
                 " and ".join(kinds)))
         it = QueueItem(d["src"], d["dst"], d.get("is_dir", True), src_conn, dst_conn)
-        it.status = d.get("status", STATUS_PENDING)
+        status = d.get("status", STATUS_PENDING)
+        # version 1 files stored the display labels
+        status = QueueItem.STATUS_BY_LABEL.get(status, status)
+        if status not in STATUS_LABELS:
+            raise ValueError("invalid status in queue: {!r}".format(status))
+        it.status = status
         # never resume as "in progress", and a dry run copied nothing
         if it.status in (STATUS_RUNNING, STATUS_DRY_OK, STATUS_DRY_INCOMPLETE):
             it.status = STATUS_PENDING
@@ -381,6 +373,59 @@ class QueueItem(object):
         return self.size_bytes is not None and self.size_files is not None
 
 
+class QueueFile:
+    """Saved queue (.json). Versions: none = a bare list of items (upstream),
+    1 = object with flags (no version field), 2 = status ids instead of labels."""
+    VERSION = 2
+
+    @staticmethod
+    def save(path, items, rsync_opts, rclone_opts):
+        data = {
+            "version": QueueFile.VERSION,
+            "rsync_opts": rsync_opts,
+            "rclone_opts": rclone_opts,
+            "items": [it.to_dict() for it in items],
+        }
+        atomic_write(path, json.dumps(data, indent=2))
+
+    @staticmethod
+    def check_opts(data, key):
+        """A queue file's flag list for one tool, or None if absent."""
+        if key not in data:
+            return None
+        opts = data[key]
+        if (not isinstance(opts, list) or not opts or
+                not all(isinstance(o, str) and "\0" not in o for o in opts)):
+            raise ValueError("invalid {} in queue file".format(key))
+        return opts
+
+    @staticmethod
+    def read(path):
+        """Parse and validate a queue file. Returns (items, rsync_opts,
+        rclone_opts), each opts None if the file doesn't set them; raises
+        ValueError/KeyError/OSError. Nothing is applied, so a bad file
+        changes nothing."""
+        with open(path, "r") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [QueueItem.from_dict(d) for d in data], None, None
+        if not isinstance(data, dict):
+            raise ValueError("not a queue file")
+        version = data.get("version", 1)
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ValueError("invalid version in queue file: {!r}".format(version))
+        if version > QueueFile.VERSION:
+            raise ValueError("the queue file was made by a newer mcrsync (format version {}) "
+                             "- update mcrsync to load it".format(version))
+        rsync_opts = QueueFile.check_opts(data, "rsync_opts")
+        rclone_opts = QueueFile.check_opts(data, "rclone_opts")
+        for flags, opts in ((RsyncFlags, rsync_opts), (RcloneFlags, rclone_opts)):
+            if opts is not None and flags.problems(opts):
+                raise ValueError("{} flags in queue file: {}".format(
+                    flags.TOOL, flags.problems(opts)))
+        return [QueueItem.from_dict(d) for d in data.get("items", [])], rsync_opts, rclone_opts
+
+
 # ----------------------------------------------------------------------
 # Settings (~/.mcrsync.yaml)
 # ----------------------------------------------------------------------
@@ -389,7 +434,7 @@ class SettingsError(Exception):
     pass
 
 
-class Settings(object):
+class Settings:
     """User settings stored as a small YAML subset (PyYAML usually isn't
     available on NAS Python installs): '#' comments, 'key: value' scalars
     and one level of nested mappings. Values are integers or strings
@@ -418,12 +463,12 @@ class Settings(object):
             return
         except (IOError, OSError, ValueError) as e:
             # unreadable (permissions, not UTF-8, ...) - keep it untouched
-            self.error = "{0}: {1}".format(self.path, e)
+            self.error = "{}: {}".format(self.path, e)
             return
         try:
             self.data = Settings.parse(text)
         except SettingsError as e:
-            self.error = "{0}: {1}".format(self.path, e)
+            self.error = "{}: {}".format(self.path, e)
 
     def save(self):
         """Returns an error string, or "" on success. A file that failed to
@@ -434,7 +479,7 @@ class Settings(object):
         try:
             atomic_write(os.path.realpath(self.path), Settings.dump(self.data))
         except (IOError, OSError) as e:
-            return "could not save settings: {0}".format(e)
+            return "could not save settings: {}".format(e)
         return ""
 
     def section(self, name):
@@ -454,11 +499,11 @@ class Settings(object):
                 continue
             stripped = line.lstrip(" ")
             if stripped.startswith("\t"):
-                raise SettingsError("line {0}: tabs are not allowed for indentation".format(n))
+                raise SettingsError("line {}: tabs are not allowed for indentation".format(n))
             indent = len(line) - len(stripped)
             m = Settings.KEY_RE.match(stripped)
             if not m:
-                raise SettingsError("line {0}: unsupported syntax, expected 'key: value'".format(n))
+                raise SettingsError("line {}: unsupported syntax, expected 'key: value'".format(n))
             key, value = m.group(1), m.group(2)
             if indent == 0:
                 if value is None:
@@ -469,9 +514,9 @@ class Settings(object):
                     current = None
             else:
                 if current is None:
-                    raise SettingsError("line {0}: unexpected indentation".format(n))
+                    raise SettingsError("line {}: unexpected indentation".format(n))
                 if value is None:
-                    raise SettingsError("line {0}: only one level of nesting is supported".format(n))
+                    raise SettingsError("line {}: only one level of nesting is supported".format(n))
                 current[key] = Settings._parse_scalar(value, n)
         return data
 
@@ -494,7 +539,7 @@ class Settings(object):
     def _parse_scalar(value, n):
         if value.startswith('"'):
             if len(value) < 2 or not value.endswith('"'):
-                raise SettingsError("line {0}: unterminated \"string\"".format(n))
+                raise SettingsError("line {}: unterminated \"string\"".format(n))
             out = []
             body = value[1:-1]
             i = 0
@@ -502,23 +547,23 @@ class Settings(object):
                 ch = body[i]
                 if ch == "\\":
                     if i + 1 >= len(body) or body[i + 1] not in '\\"':
-                        raise SettingsError("line {0}: only \\\\ and \\\" escapes are supported".format(n))
+                        raise SettingsError("line {}: only \\\\ and \\\" escapes are supported".format(n))
                     out.append(body[i + 1])
                     i += 2
                     continue
                 if ch == '"':
-                    raise SettingsError("line {0}: unescaped \" inside string".format(n))
+                    raise SettingsError("line {}: unescaped \" inside string".format(n))
                 out.append(ch)
                 i += 1
             return "".join(out)
         if value.startswith("'"):
             if len(value) < 2 or not value.endswith("'"):
-                raise SettingsError("line {0}: unterminated 'string'".format(n))
+                raise SettingsError("line {}: unterminated 'string'".format(n))
             return value[1:-1].replace("''", "'")
         if Settings.INT_RE.match(value):
             return int(value)
         if value.lower() in Settings.AMBIGUOUS_PLAIN or value[0] in "[]{}&*!|>%@`-?:,":
-            raise SettingsError("line {0}: put quotes around {1}".format(n, value))
+            raise SettingsError("line {}: put quotes around {}".format(n, value))
         return value
 
     @staticmethod
@@ -533,11 +578,11 @@ class Settings(object):
                  "# Supported: comments, 'key: value' and one level of nesting."]
         for key, value in data.items():
             if isinstance(value, dict):
-                lines.append("{0}:".format(key))
+                lines.append("{}:".format(key))
                 for k, v in value.items():
-                    lines.append("  {0}: {1}".format(k, Settings._dump_scalar(v)))
+                    lines.append("  {}: {}".format(k, Settings._dump_scalar(v)))
             else:
-                lines.append("{0}: {1}".format(key, Settings._dump_scalar(value)))
+                lines.append("{}: {}".format(key, Settings._dump_scalar(value)))
         return "\n".join(lines) + "\n"
 
 
@@ -545,7 +590,7 @@ class Settings(object):
 # rsync option helpers
 # ----------------------------------------------------------------------
 
-class FlagSet(object):
+class FlagSet:
     """Flag checks on a user-editable option list (rsync's or rclone's).
     Short flags are also found inside combined clusters like '-avu'."""
 
@@ -816,7 +861,7 @@ class ConnectionLost(FsError):
     pass
 
 
-class Fs(object):
+class Fs:
     """What panes, runners and conflict resolution need from a side of a
     copy. Paths are always absolute in that side's own namespace.
 
@@ -916,12 +961,12 @@ class LocalFs(Fs):
         if new exists. Filesystems without hard links (FAT/exFAT) fall back
         to check-then-rename."""
         if os.path.lexists(new):
-            raise FsError("'{0}' already exists".format(os.path.basename(new)))
+            raise FsError("'{}' already exists".format(os.path.basename(new)))
         if not os.path.isdir(old) or os.path.islink(old):
             try:
                 os.link(old, new, follow_symlinks=False)
             except FileExistsError:
-                raise FsError("'{0}' already exists".format(os.path.basename(new)))
+                raise FsError("'{}' already exists".format(os.path.basename(new)))
             except OSError:
                 pass
             else:
@@ -929,7 +974,7 @@ class LocalFs(Fs):
                     os.unlink(old)
                 except OSError as e:
                     raise FsError("copied to the new name but could not remove the old "
-                                  "name: {0}".format(e))
+                                  "name: {}".format(e))
                 return
         try:
             os.rename(old, new)
@@ -989,7 +1034,7 @@ class LocalFs(Fs):
 LOCAL_FS = LocalFs()
 
 
-class SshConnection(object):
+class SshConnection:
     """One ssh ControlMaster connection. The master is opened in the plain
     terminal (curses suspended) so ssh can ask for host-key confirmation or
     a password itself. Every other ssh/rsync call multiplexes over its
@@ -1002,7 +1047,7 @@ class SshConnection(object):
         self.log_path = log_path
 
     def dest(self):
-        return "{0}@{1}".format(self.spec.user, self.spec.host)
+        return "{}@{}".format(self.spec.user, self.spec.host)
 
     # Remote commands normally finish in well under a second; this only
     # stops a hung host from freezing the UI forever.
@@ -1049,7 +1094,7 @@ class SshConnection(object):
         except KeyboardInterrupt:
             return False, "cancelled"
         except OSError as e:
-            return False, "could not start ssh: {0}".format(e)
+            return False, "could not start ssh: {}".format(e)
         if rc == 0 and self.check():
             return True, ""
         try:
@@ -1057,7 +1102,7 @@ class SshConnection(object):
                 err = log.read().strip()
         except (IOError, OSError):
             err = ""
-        return False, err or "ssh exited with code {0}".format(rc)
+        return False, err or "ssh exited with code {}".format(rc)
 
     def check(self):
         cmd = ["ssh"] + self._common_opts() + ["-O", "check", "--", self.dest()]
@@ -1087,10 +1132,10 @@ class SshConnection(object):
         differently by an unusual login shell."""
         prologue = []
         for i, a in enumerate(args, 1):
-            octal = "".join("\\{0:03o}".format(b) for b in os.fsencode(a))
+            octal = "".join("\\{:03o}".format(b) for b in os.fsencode(a))
             # the trailing x protects trailing newlines from $(...)
             prologue.append("a{0}=$(printf '{1}'; printf x); a{0}=${{a{0}%x}}".format(i, octal))
-        prologue.append("set -- " + " ".join('"$a{0}"'.format(i) for i in range(1, len(args) + 1)))
+        prologue.append("set -- " + " ".join('"$a{}"'.format(i) for i in range(1, len(args) + 1)))
         stdin_data = ("\n".join(prologue) + "\n" + script + "\n").encode("ascii")
         cmd = ["ssh"] + self.client_opts() + ["--", self.dest(), "sh -s"]
         try:
@@ -1098,13 +1143,13 @@ class SshConnection(object):
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE)
         except OSError as e:
-            return 255, b"", "could not start ssh: {0}".format(e)
+            return 255, b"", "could not start ssh: {}".format(e)
         try:
             out, err = proc.communicate(stdin_data, timeout=SshConnection.RUN_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
-            return 124, b"", "remote command timed out after {0}s".format(
+            return 124, b"", "remote command timed out after {}s".format(
                 SshConnection.RUN_TIMEOUT)
         return proc.returncode, out, os.fsdecode(err)
 
@@ -1161,18 +1206,18 @@ class RemoteFs(Fs):
         return self.spec.display_path(path)
 
     def rsync_arg(self, path):
-        return "{0}@{1}:{2}".format(self.spec.user, self.spec.host, path)
+        return "{}@{}:{}".format(self.spec.user, self.spec.host, path)
 
     def _run(self, script, *args):
         rc, out, err = self.conn.run(script, args)
         if rc == 255 and not self.conn.check():
-            raise ConnectionLost("connection to {0} is closed".format(self.spec.key()))
+            raise ConnectionLost("connection to {} is closed".format(self.spec.key()))
         return rc, out, err
 
     def _run_ok(self, script, *args):
         rc, out, err = self._run(script, *args)
         if rc != 0:
-            raise FsError(err.strip() or "remote command failed (exit {0})".format(rc))
+            raise FsError(err.strip() or "remote command failed (exit {})".format(rc))
         return out
 
     def _run_data(self, script, *args):
@@ -1191,7 +1236,7 @@ class RemoteFs(Fs):
             path = path[2:]
         resolved = os.fsdecode(self._run_data(RemoteFs.RESOLVE_SCRIPT, path))
         if not resolved.startswith("/"):
-            raise FsError("remote shell reported no absolute path for {0!r}".format(path))
+            raise FsError("remote shell reported no absolute path for {!r}".format(path))
         return resolved
 
     def list_dir(self, path):
@@ -1217,7 +1262,7 @@ class RemoteFs(Fs):
     def _test(self, script, path):
         rc, out, err = self._run(script, path)
         if rc not in (0, 1):
-            raise FsError(err.strip() or "remote command failed (exit {0})".format(rc))
+            raise FsError(err.strip() or "remote command failed (exit {})".format(rc))
         return rc == 0
 
     def exists(self, path):
@@ -1276,7 +1321,7 @@ class RcloneUnavailable(ConnectionLost):
     (network trouble, an expired login, a provider's daily limit)."""
 
 
-class RcloneCli(object):
+class RcloneCli:
     """Runs the rclone binary. Never prompts: stdin is closed and
     --ask-password=false makes an encrypted config fail instead of waiting
     for a password (it works if RCLONE_CONFIG_PASS or
@@ -1301,7 +1346,7 @@ class RcloneCli(object):
     PAUSE_CODES = {
         5: "temporary error (network or provider trouble)",
         7: "fatal error (e.g. login expired or account problem) - fix it, e.g. with "
-           "'rclone config reconnect {0}:', then press P",
+           "'rclone config reconnect {}:', then press P",
         8: "transfer limit reached (e.g. a provider's daily upload limit)",
     }
     # 100 years: what rclone reports for "can't store modification times"
@@ -1326,7 +1371,7 @@ class RcloneCli(object):
             return subprocess.Popen(RcloneCli.cmd(command, args), stdin=subprocess.DEVNULL,
                                     stdout=stdout, stderr=stderr)
         except OSError as e:
-            raise FsError("could not start rclone ({0}) - is it installed and in PATH?".format(e))
+            raise FsError("could not start rclone ({}) - is it installed and in PATH?".format(e))
 
     @staticmethod
     def run(command, args, timeout=RUN_TIMEOUT):
@@ -1337,7 +1382,7 @@ class RcloneCli(object):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.communicate()
-            return 124, b"", "rclone {0} timed out after {1}s".format(command, timeout)
+            return 124, b"", "rclone {} timed out after {}s".format(command, timeout)
         return proc.returncode, out, os.fsdecode(err)
 
     @staticmethod
@@ -1358,7 +1403,7 @@ class RcloneCli(object):
                 if is_error:
                     lines.append(text)
         lines = [l for l in lines if l]
-        return lines[-1] if lines else "rclone exited with code {0}".format(rc)
+        return lines[-1] if lines else "rclone exited with code {}".format(rc)
 
     @staticmethod
     def version():
@@ -1391,7 +1436,7 @@ class RcloneCli(object):
             raise FsError("unexpected output from rclone " + what)
 
 
-class RcloneRemote(object):
+class RcloneRemote:
     """Session state of one rclone remote: whether it was checked and is
     usable ("ready"), what its backend can do, and folders mcrsync created
     that bucket storage can't show yet (they only exist once a file is put
@@ -1417,7 +1462,7 @@ class RcloneRemote(object):
         except FsError as e:
             return self._failed(str(e))
         if self.spec.remote not in names:
-            return self._failed("there is no remote '{0}' in your rclone config (see "
+            return self._failed("there is no remote '{}' in your rclone config (see "
                                 "'rclone listremotes')".format(self.spec.remote))
         rc, out, err = RcloneCli.run("backend", ["features", "--", self.spec.arg("/")])
         if rc != 0:
@@ -1431,7 +1476,7 @@ class RcloneRemote(object):
             self.backend = str(info.get("Name", ""))
             self.root = str(info.get("Root", ""))
         except (FsError, AttributeError, TypeError, ValueError) as e:
-            return self._failed("could not read the remote's features: {0}".format(e))
+            return self._failed("could not read the remote's features: {}".format(e))
         self.ready = True
         self.problem = ""
         return ""
@@ -1479,10 +1524,10 @@ class RcloneFs(Fs):
             return rc, out, err
         text = RcloneCli.error_text(err, rc)
         if rc in RcloneCli.PAUSE_CODES:
-            text = "{0}: {1} - rclone said: {2}".format(
+            text = "{}: {} - rclone said: {}".format(
                 self.spec.key(), RcloneCli.PAUSE_CODES[rc].format(self.spec.remote), text)
         elif RcloneCli.is_network_error(text):
-            text = "{0} can't be reached: {1}".format(self.spec.key(), text)
+            text = "{} can't be reached: {}".format(self.spec.key(), text)
         else:
             return rc, out, err
         self.remote.mark_unavailable(text)
@@ -1505,7 +1550,7 @@ class RcloneFs(Fs):
     def resolve(self, path):
         path = RcloneFs.normalize(path)
         if not self.isdir(path):
-            raise FsError("folder not found: {0}".format(self.display_path(path)))
+            raise FsError("folder not found: {}".format(self.display_path(path)))
         return path
 
     def list_dir(self, path):
@@ -1560,10 +1605,10 @@ class RcloneFs(Fs):
         appears after our check (object storage has no atomic no-clobber
         rename); the checks afterwards catch a move that didn't happen."""
         if self.exists(new):
-            raise FsError("'{0}' already exists".format(posixpath.basename(new)))
+            raise FsError("'{}' already exists".format(posixpath.basename(new)))
         kind = self.stat(old)
         if kind is None:
-            raise FsError("'{0}' no longer exists".format(posixpath.basename(old)))
+            raise FsError("'{}' no longer exists".format(posixpath.basename(old)))
         # A folder's contents go into new (which doesn't exist); on object
         # storage that's file by file - so no time limit.
         if kind == "dir":
@@ -1579,15 +1624,15 @@ class RcloneFs(Fs):
             # rmdir only ever removes an empty folder
             self._run("rmdir", ["--", self.rclone_arg(old)])
         if not self.exists(new):
-            raise FsError("'{0}' already exists - nothing was renamed".format(
+            raise FsError("'{}' already exists - nothing was renamed".format(
                 posixpath.basename(new)))
         if self.exists(old):
-            raise FsError("only partly renamed - some files are still under '{0}'".format(
+            raise FsError("only partly renamed - some files are still under '{}'".format(
                 posixpath.basename(old)))
 
     def mkdir(self, path):
         if self.exists(path):
-            raise FsError("'{0}' already exists".format(posixpath.basename(path)))
+            raise FsError("'{}' already exists".format(posixpath.basename(path)))
         self.makedirs(path)
 
     def makedirs(self, path):
@@ -1613,7 +1658,7 @@ class RcloneFs(Fs):
                 return None
 
 
-class ConnectionRegistry(object):
+class ConnectionRegistry:
     """All remote connections of this session: SSH connections keyed by
     user@host:port, rclone remotes by rclone:name. Queue items may refer
     to ones that aren't open (e.g. after loading a queue); those are
@@ -1640,8 +1685,8 @@ class ConnectionRegistry(object):
                 n = self.next_id
                 self.next_id += 1
                 conn = SshConnection(spec,
-                                     os.path.join(self.sock_dir, "{0}.sock".format(n)),
-                                     os.path.join(self.sock_dir, "{0}.log".format(n)))
+                                     os.path.join(self.sock_dir, "{}.sock".format(n)),
+                                     os.path.join(self.sock_dir, "{}.log".format(n)))
                 self.conns[spec.key()] = conn
             elif spec.keyfile != conn.spec.keyfile:
                 conn.spec = spec
@@ -1681,7 +1726,7 @@ class ConnectionRegistry(object):
         parts = []
         for spec in specs:
             why = self.problem(spec)
-            parts.append("{0} ({1})".format(spec.key(), why) if why else spec.key())
+            parts.append("{} ({})".format(spec.key(), why) if why else spec.key())
         return "; ".join(parts)
 
     def open_rclone(self, spec):
@@ -1695,7 +1740,7 @@ class ConnectionRegistry(object):
                 remote.mark_unavailable(str(e))
                 return str(e)
             if version < RcloneCli.MIN_VERSION:
-                text = "rclone {0}.{1} is too old - mcrsync needs {2}.{3} or newer".format(
+                text = "rclone {}.{} is too old - mcrsync needs {}.{} or newer".format(
                     version[0], version[1], *RcloneCli.MIN_VERSION)
                 remote.mark_unavailable(text)
                 return text
@@ -1733,7 +1778,7 @@ class ConnectionRegistry(object):
             for spec in specs:
                 conn = self.get(spec)
                 print("")
-                print("mcrsync: connecting to {0}{1} ...".format(
+                print("mcrsync: connecting to {}{} ...".format(
                     spec.key(), " with key " + spec.keyfile if spec.keyfile else ""))
                 print("(ssh asks below for host-key confirmation and/or the password "
                       "if needed. If it asks for the password again, the password was "
@@ -1744,7 +1789,7 @@ class ConnectionRegistry(object):
                     print("Connected.")
                 else:
                     print("")
-                    print("Connection FAILED: {0}".format(err))
+                    print("Connection FAILED: {}".format(err))
                     failed.append(spec)
             if failed:
                 print("")
@@ -1779,14 +1824,12 @@ class ConnectionRegistry(object):
 
 STATS_RE = {
     "files_transferred": re.compile(r"Number of (?:regular )?files transferred:\s*([\d,]+)"),
-    "created_files": re.compile(r"Number of created files:\s*([\d,]+)"),
-    "bytes": re.compile(r"Total transferred file size:\s*([\d,]+)"),
     "total_size": re.compile(r"Total file size:\s*([\d,]+)"),
     "file_count": re.compile(r"Number of files:\s*[\d,]+(?: \(([^)]*)\))?"),
 }
 
 
-class Progress(object):
+class Progress:
     """Live state of the item being copied. Written only by the run thread
     and read by the UI (single attribute updates, so no lock is needed).
 
@@ -1939,7 +1982,7 @@ class Progress(object):
         elif self.phase == Progress.SCANNING and not self.reviewed_files and not self.bytes:
             todo = "building the file list - big folders can take a while"
             if self.total_bytes is not None and self.total_files is not None:
-                todo += " ({0}, {1:,} files to review)".format(
+                todo += " ({}, {:,} files to review)".format(
                     Progress.short_size(self.total_bytes), self.total_files)
             parts.append(todo)
         else:
@@ -1947,31 +1990,31 @@ class Progress(object):
                 # the estimate may be a bit stale - never show more than 100%
                 total = max(self.total_bytes, self.reviewed_bytes)
                 pct = 100.0 * self.reviewed_bytes / total if total else 100.0
-                parts.append("reviewed {0} of {1} ({2:.0f}%)".format(
+                parts.append("reviewed {} of {} ({:.0f}%)".format(
                     Progress.short_size(self.reviewed_bytes), Progress.short_size(total), pct))
             else:
-                parts.append("reviewed {0}".format(Progress.short_size(self.reviewed_bytes)))
+                parts.append("reviewed {}".format(Progress.short_size(self.reviewed_bytes)))
             if self.total_files is not None:
-                parts.append("{0:,} of {1:,} files".format(
+                parts.append("{:,} of {:,} files".format(
                     self.reviewed_files, max(self.total_files, self.reviewed_files)))
             else:
-                parts.append("{0:,} files".format(self.reviewed_files))
-            parts.append("{0} {1:,} file{2}, {3}".format(
+                parts.append("{:,} files".format(self.reviewed_files))
+            parts.append("{} {:,} file{}, {}".format(
                 "would copy" if self.dry_run else "copied", self.copied_files,
                 "" if self.copied_files == 1 else "s", Progress.short_size(self.copied_bytes)))
             if self.speed is not None and not self.dry_run:
                 parts.append(Progress.short_size(self.speed) + "/s")
             if self.conflicts:
-                parts.append("{0:,} conflict{1}".format(
+                parts.append("{:,} conflict{}".format(
                     self.conflicts, "" if self.conflicts == 1 else "s"))
             if self.deleted:
-                parts.append("{0:,} {1}".format(
+                parts.append("{:,} {}".format(
                     self.deleted, "would be deleted" if self.dry_run else "DELETED"))
         elapsed = int(time.time() - self.started)
         if elapsed < 60:
-            parts.append("{0}s".format(elapsed))
+            parts.append("{}s".format(elapsed))
         elif elapsed < 3600:
-            parts.append("{0}m {1:02d}s".format(elapsed // 60, elapsed % 60))
+            parts.append("{}m {:02d}s".format(elapsed // 60, elapsed % 60))
         else:
             parts.append(format_duration(elapsed))
         if self.current and self.phase in (Progress.COPYING, Progress.DELETING):
@@ -1979,7 +2022,7 @@ class Progress(object):
         return " | ".join(parts)
 
 
-class Runner(object):
+class Runner:
     """What rsync and rclone items share: resetting an item for a run,
     refusing surprising item shapes, final statuses and conflict
     resolution. Subclasses run the tool (run_item, item_cmd) and provide
@@ -2002,12 +2045,11 @@ class Runner(object):
         item.errors_list = []
         item.error_text = ""
         item.copied_files = 0
-        item.bytes_transferred = 0
         item.progress = Progress(dry_run, item.size_bytes, item.size_files)
         # Our "don't clobber newer target files" safety net relies on -u.
         if not self.flags().has_update(opts):
-            log_cb("WARNING: -u/--update not in {0} options - newer target files may be "
-                   "overwritten for {1}".format(self.TOOL, item.src_display()))
+            log_cb("WARNING: -u/--update not in {} options - newer target files may be "
+                   "overwritten for {}".format(self.TOOL, item.src_display()))
         return dry_run
 
     @staticmethod
@@ -2067,8 +2109,8 @@ class Runner(object):
             unsafe = [n for n in copied + newer if not Runner.safe_relname(n)]
             for name in unsafe:
                 item.errors_list.append((item.src_display(), item.dst_display(),
-                                         "ignored an unexpected file name in {0}'s output: "
-                                         "{1!r}".format(self.TOOL, name)))
+                                         "ignored an unexpected file name in {}'s output: "
+                                         "{!r}".format(self.TOOL, name)))
             if unsafe:
                 unsafe = set(unsafe)
                 copied = [n for n in copied if n not in unsafe]
@@ -2090,7 +2132,6 @@ class Runner(object):
             else:
                 item.conflicts.append(Conflict(src_fs.pathmod.basename(item.src),
                                                item.src, item.dst, dry_run))
-        item.skipped_files = len(item.conflicts)
 
     def _set_final_status(self, item, dry_run, seconds):
         if item.conflicts:
@@ -2123,7 +2164,7 @@ class Runner(object):
                 conflict.remark = "user skipped"
             elif action == "rename":
                 # rename the EXISTING (target) file out of the way, then copy in
-                newname = "{0}.conflict-{1}{2}".format(base, int(time.time()), ext)
+                newname = "{}.conflict-{}{}".format(base, int(time.time()), ext)
                 dst_fs.rename(conflict.dst_full, newname)
                 try:
                     self.copy_new_file(src_fs, conflict.src_full, dst_fs, conflict.dst_full)
@@ -2132,16 +2173,16 @@ class Runner(object):
                         dst_fs.rename(newname, conflict.dst_full)
                         where = "the existing file was put back"
                     except FsError:
-                        where = "the existing file is now named {0}".format(
+                        where = "the existing file is now named {}".format(
                             dst_fs.pathmod.basename(newname))
-                    raise FsError("copy failed ({0}); {1}".format(e, where))
-                conflict.remark = "existing renamed to {0}".format(dst_fs.pathmod.basename(newname))
+                    raise FsError("copy failed ({}); {}".format(e, where))
+                conflict.remark = "existing renamed to {}".format(dst_fs.pathmod.basename(newname))
             elif action == "autorename":
                 # copy the INCOMING file in under a new auto-generated name,
                 # leaving the existing target file untouched
-                newname = "{0}.new-{1}{2}".format(base, int(time.time()), ext)
+                newname = "{}.new-{}{}".format(base, int(time.time()), ext)
                 self.copy_new_file(src_fs, conflict.src_full, dst_fs, newname)
-                conflict.remark = "auto-renamed incoming to {0}".format(dst_fs.pathmod.basename(newname))
+                conflict.remark = "auto-renamed incoming to {}".format(dst_fs.pathmod.basename(newname))
             conflict.resolution = action
             return True, ""
         except FsError as e:
@@ -2211,14 +2252,14 @@ class RsyncRunner(Runner):
         if item:
             kind, ftype, size, name = item
             if kind == "*":
-                return "{0}DELETED: {1}".format(would, name)
+                return "{}DELETED: {}".format(would, name)
             if kind in "<>":
-                return "{0}copied: {1} ({2})".format(would, name, Progress.short_size(size))
+                return "{}copied: {} ({})".format(would, name, Progress.short_size(size))
             if kind == "c":
-                return "{0}created: {1}".format(would, name)
+                return "{}created: {}".format(would, name)
             return None
         if line.endswith(RsyncRunner.NEWER_SUFFIX):
-            return "CONFLICT (target newer, not copied): {0}".format(
+            return "CONFLICT (target newer, not copied): {}".format(
                 RsyncRunner.unescape(line[:-len(RsyncRunner.NEWER_SUFFIX)]))
         if line.startswith(("rsync:", "rsync error:", "rsync warning:")):
             return line
@@ -2274,7 +2315,7 @@ class RsyncRunner(Runner):
             proc = RsyncRunner._spawn(cmd)
             out, _ = proc.communicate()
         except OSError as e:
-            raise FsError("could not start rsync: {0}".format(e))
+            raise FsError("could not start rsync: {}".format(e))
         return proc.returncode, [os.fsdecode(l) for l in out.split(b"\n")]
 
     def run_item(self, item, log_cb, rsync_opts=None):
@@ -2310,17 +2351,17 @@ class RsyncRunner(Runner):
             cmd = self.item_cmd(item, rsync_opts, src_fs, dst_fs)
         except ConnectionLost as e:
             item.status = STATUS_PENDING
-            log_cb("CONNECTION LOST: {0}".format(e))
+            log_cb("CONNECTION LOST: {}".format(e))
             return False
         except FsError as e:
-            self._fail(item, "could not prepare target: {0}".format(e))
+            self._fail(item, "could not prepare target: {}".format(e))
             return True
 
         transfer_start = time.time()
         try:
             proc = RsyncRunner._spawn(cmd)
         except OSError as e:
-            self._fail(item, "could not start rsync: {0}".format(e))
+            self._fail(item, "could not start rsync: {}".format(e))
             return True
 
         progress = item.progress
@@ -2348,7 +2389,7 @@ class RsyncRunner(Runner):
 
         if rc != 0 and remote is not None and not remote.conn.check():
             item.status = STATUS_PENDING
-            log_cb("CONNECTION LOST to {0} during {1}".format(remote.spec.key(), item.src_display()))
+            log_cb("CONNECTION LOST to {} during {}".format(remote.spec.key(), item.src_display()))
             return False
 
         copied, newer, errors = RsyncRunner.parse_output(out_lines)
@@ -2359,13 +2400,10 @@ class RsyncRunner(Runner):
         m = STATS_RE["files_transferred"].search(text)
         if m:
             item.copied_files = int(m.group(1).replace(",", ""))
-        m = STATS_RE["bytes"].search(text)
-        if m:
-            item.bytes_transferred = int(m.group(1).replace(",", ""))
 
         if rc != 0:
             detail = errors[0] if errors else ""
-            self._fail(item, "rsync exited with code {0}{1}".format(
+            self._fail(item, "rsync exited with code {}{}".format(
                 rc, (" - " + detail) if detail else ""))
         else:
             self._set_final_status(item, dry_run, transfer_end - transfer_start)
@@ -2389,9 +2427,9 @@ class RsyncRunner(Runner):
         rc, lines = self._run_capture(cmd)
         copied, newer, errors = RsyncRunner.parse_output(lines)
         if rc != 0:
-            raise FsError(errors[0] if errors else "rsync exited with code {0}".format(rc))
+            raise FsError(errors[0] if errors else "rsync exited with code {}".format(rc))
         if not copied:
-            raise FsError("'{0}' already exists - nothing was overwritten".format(
+            raise FsError("'{}' already exists - nothing was overwritten".format(
                 dst_fs.pathmod.basename(dst)))
 
 
@@ -2465,7 +2503,7 @@ class RcloneRunner(Runner):
                 return ("unchanged", name, None)
         if level in ("error", "critical", "warning", "notice"):
             kind = "error" if level in ("error", "critical") else "notice"
-            return (kind, name, "{0}: {1}".format(name, msg) if name else msg)
+            return (kind, name, "{}: {}".format(name, msg) if name else msg)
         return None
 
     @staticmethod
@@ -2473,19 +2511,19 @@ class RcloneRunner(Runner):
         """Readable run-log text for an event, or None."""
         kind, name, value = event
         if kind == "copied":
-            return "{0}: {1} ({2})".format("replaced" if value else "copied", name,
+            return "{}: {} ({})".format("replaced" if value else "copied", name,
                                            Progress.short_size(size))
         if kind == "would_copy":
-            return "would be copied: {0} ({1})".format(name, Progress.short_size(value))
+            return "would be copied: {} ({})".format(name, Progress.short_size(value))
         if kind == "deleted":
-            return "{0}DELETED: {1}{2}".format("would be " if dry_run else "", name,
+            return "{}DELETED: {}{}".format("would be " if dry_run else "", name,
                                                "/" if value else "")
         if kind == "newer":
-            return "CONFLICT (target newer, not copied): {0}".format(name)
+            return "CONFLICT (target newer, not copied): {}".format(name)
         if kind == "symlink":
-            return "rclone error: symlink skipped (tick -l, --links to keep it): {0}".format(name)
+            return "rclone error: symlink skipped (tick -l, --links to keep it): {}".format(name)
         if kind in ("error", "notice"):
-            return "rclone {0}: {1}".format(kind, value)
+            return "rclone {}: {}".format(kind, value)
         return None
 
     @staticmethod
@@ -2606,11 +2644,11 @@ class RcloneRunner(Runner):
         item.status = STATUS_PENDING
         for spec in item.conn_specs():
             if spec.kind == "rclone":
-                text = "{0}: {1}".format(spec.key(), RcloneCli.PAUSE_CODES[rc].format(spec.remote))
+                text = "{}: {}".format(spec.key(), RcloneCli.PAUSE_CODES[rc].format(spec.remote))
                 if errors:
                     text += " - rclone said: " + errors[0]
                 self.registry.rclone_remote(spec).mark_unavailable(text)
-        log_cb("CONNECTION LOST: rclone exited with code {0} during {1}".format(
+        log_cb("CONNECTION LOST: rclone exited with code {} during {}".format(
             rc, item.src_display()))
 
     def unreachable_side(self, item, src_fs, dst_fs):
@@ -2647,14 +2685,14 @@ class RcloneRunner(Runner):
             args = self.item_args(item, opts, src_fs, dst_fs)
         except ConnectionLost as e:
             item.status = STATUS_PENDING
-            log_cb("CONNECTION LOST: {0}".format(e))
+            log_cb("CONNECTION LOST: {}".format(e))
             return False
         except FsError as e:
-            self._fail(item, "could not check the target: {0}".format(e))
+            self._fail(item, "could not check the target: {}".format(e))
             return True
         link = RcloneRunner.linked_folder_in_target(item, dst_fs, opts)
         if link:
-            self._fail(item, "not synced: the target has a symlink to a folder, '{0}' - if rclone "
+            self._fail(item, "not synced: the target has a symlink to a folder, '{}' - if rclone "
                              "followed it, --delete would delete files outside the target. Use "
                              "it without --delete, or remove the link".format(link))
             return True
@@ -2670,14 +2708,14 @@ class RcloneRunner(Runner):
                 lost = self.unreachable_side(item, src_fs, dst_fs)
                 if lost:
                     item.status = STATUS_PENDING
-                    log_cb("CONNECTION LOST: {0} (during {1})".format(lost, item.src_display()))
+                    log_cb("CONNECTION LOST: {} (during {})".format(lost, item.src_display()))
                     return False
                 self._fail(item, "could not list the source: " + list_error)
                 return True
             if listing is not None:
                 link = RcloneRunner.symlink_in_target(item, dst_fs, listing)
                 if link:
-                    self._fail(item, "not copied: the target has a symlink '{0}' where the "
+                    self._fail(item, "not copied: the target has a symlink '{}' where the "
                                      "source has a folder - rclone would write through it, "
                                      "outside the target".format(link))
                     return True
@@ -2740,13 +2778,12 @@ class RcloneRunner(Runner):
             lost = self.unreachable_side(item, src_fs, dst_fs)
             if lost:
                 item.status = STATUS_PENDING
-                log_cb("CONNECTION LOST: {0} (during {1})".format(lost, item.src_display()))
+                log_cb("CONNECTION LOST: {} (during {})".format(lost, item.src_display()))
                 return False
         self._add_results(item, src_fs, dst_fs, copied, newer, dry_run)
         item.copied_files = progress.copied_files
-        item.bytes_transferred = progress.copied_bytes
         if rc != 0:
-            self._fail(item, "rclone exited with code {0}{1}".format(
+            self._fail(item, "rclone exited with code {}{}".format(
                 rc, (" - " + errors[0]) if errors else ""))
         else:
             self._set_final_status(item, dry_run, time.time() - transfer_start)
@@ -2757,7 +2794,7 @@ class RcloneRunner(Runner):
         stderr). Exit codes worth retrying become FsError right away."""
         rc, out, err = RcloneCli.run(command, ["--use-json-log"] + args, timeout=None)
         if rc in RcloneCli.PAUSE_CODES:
-            raise FsError("{0} (rclone exit code {1}) - try again later".format(
+            raise FsError("{} (rclone exit code {}) - try again later".format(
                 RcloneCli.error_text(err, rc), rc))
         events = [e for e in (RcloneRunner.parse_line(l) for l in err.splitlines()) if e]
         return rc, events, err
@@ -2778,11 +2815,11 @@ class RcloneRunner(Runner):
         if rc != 0:
             raise FsError(RcloneCli.error_text(err, rc))
         if not any(e[0] == "copied" for e in events):
-            raise FsError("'{0}' already exists - nothing was overwritten".format(
+            raise FsError("'{}' already exists - nothing was overwritten".format(
                 dst_fs.pathmod.basename(dst)))
 
 
-class Transfers(object):
+class Transfers:
     """Picks each queue item's runner: rclone if either side is an rclone
     remote, else rsync."""
 
@@ -2831,17 +2868,37 @@ def safe_addstr(win, y, x, text, attr=0):
         pass
 
 
-CTRL_U = 21
+class Keys:
+    """Key codes curses has no constant for, or that come as several codes."""
+    TAB = 9
+    ESC = 27
+    CTRL_U = 21
+    ENTER = (10, 13, curses.KEY_ENTER)
+    BACKSPACE = (curses.KEY_BACKSPACE, 127, 8)
+
+
+class Color:
+    """Color pair numbers, set up in App.__init__."""
+    ACTIVE_HEADER = 1
+    YELLOW = 2
+    GREEN = 3
+    RED = 4
+    MAGENTA = 5
+    STATUSBAR = 6
+    CYAN = 7
+    ACTIVE_FRAME = 8
+    GRAY = 9
+    BRIGHT_RED = 10
 
 
 def edit_text(text, c):
     """Apply key c (from read_key) to the char list text. Returns True if
     it was an editing key. Without a cursor, Left/Right are ignored rather
     than inserted as escape-sequence garbage."""
-    if c in (curses.KEY_BACKSPACE, 127, 8):
+    if c in Keys.BACKSPACE:
         if text:
             text.pop()
-    elif c == CTRL_U:
+    elif c == Keys.CTRL_U:
         del text[:]
     elif isinstance(c, str):
         text.append(c)
@@ -2876,9 +2933,9 @@ def prompt_string(stdscr, prompt, default=""):
             win.noutrefresh()
             curses.doupdate()
             c = read_key(win)
-            if c == 27:
+            if c == Keys.ESC:
                 return None
-            if c in (10, 13, curses.KEY_ENTER):
+            if c in Keys.ENTER:
                 return "".join(text)
             edit_text(text, c)
     finally:
@@ -2910,7 +2967,7 @@ def confirm(stdscr, prompt, attr=0):
         c = win.getch()
         if c in (ord('y'), ord('Y')):
             return True
-        if c in (ord('n'), ord('N'), 27):
+        if c in (ord('n'), ord('N'), Keys.ESC):
             return False
 
 
@@ -2967,16 +3024,16 @@ def modal_input_dialog(stdscr, title, label, default=""):
         curses.doupdate()
 
         c = read_key(win)
-        if c == 27:  # Esc
+        if c == Keys.ESC:
             curses.curs_set(0)
             return False, ""
-        elif c in (9, curses.KEY_DOWN):  # Tab
+        elif c in (Keys.TAB, curses.KEY_DOWN):
             focus = {"field": "ok", "ok": "cancel", "cancel": "field"}[focus]
         elif c in (curses.KEY_BTAB, curses.KEY_UP):
             focus = {"field": "cancel", "ok": "field", "cancel": "ok"}[focus]
         elif c in (curses.KEY_LEFT, curses.KEY_RIGHT) and focus != "field":
             focus = "cancel" if focus == "ok" else "ok"
-        elif c in (10, 13, curses.KEY_ENTER):  # Enter
+        elif c in Keys.ENTER:
             curses.curs_set(0)
             if focus == "cancel":
                 return False, ""
@@ -3012,7 +3069,7 @@ def form_dialog(stdscr, title, fields, error=""):
     n = len(fields)
     if h < n + 10 or w < 48:
         message(stdscr, "The terminal is too small for this form - make it at least "
-                "48 x {0}.".format(n + 10))
+                "48 x {}.".format(n + 10))
         return None
     labels = [f[0] for f in fields]
     values = [list(f[1]) for f in fields]
@@ -3041,7 +3098,7 @@ def form_dialog(stdscr, title, fields, error=""):
         if focus < n:
             safe_addstr(win, n + 3, 2, hints[focus], curses.A_DIM)
         if error:
-            safe_addstr(win, n + 4, 2, error, curses.color_pair(4) | curses.A_BOLD)
+            safe_addstr(win, n + 4, 2, error, curses.color_pair(Color.RED) | curses.A_BOLD)
         ok_label, cancel_label = "[ OK ]", "[ Cancel ]"
         ok_x = box_w // 2 - len(ok_label) - 2
         cancel_x = box_w // 2 + 2
@@ -3064,16 +3121,16 @@ def form_dialog(stdscr, title, fields, error=""):
         curses.doupdate()
 
         c = read_key(win)
-        if c == 27:  # Esc
+        if c == Keys.ESC:
             curses.curs_set(0)
             return None
-        elif c in (9, curses.KEY_DOWN):
+        elif c in (Keys.TAB, curses.KEY_DOWN):
             focus = (focus + 1) % (n + 2)
         elif c in (curses.KEY_BTAB, curses.KEY_UP):
             focus = (focus - 1) % (n + 2)
         elif c in (curses.KEY_LEFT, curses.KEY_RIGHT) and focus >= n:
             focus = n + 1 if focus == n else n
-        elif c in (10, 13, curses.KEY_ENTER):
+        elif c in Keys.ENTER:
             if focus < n - 1:
                 focus += 1
                 continue
@@ -3132,9 +3189,9 @@ def pick_dialog(stdscr, title, label, options, index=0, notes=None):
         win.noutrefresh()
         curses.doupdate()
         c = read_key(win)
-        if c == 27:
+        if c == Keys.ESC:
             return None
-        if c in (10, 13, curses.KEY_ENTER):
+        if c in Keys.ENTER:
             return index
         if c == curses.KEY_UP:
             index = max(0, index - 1)
@@ -3146,7 +3203,7 @@ def flash(win):
     curses.flash()
 
 
-class NotBusy(object):
+class NotBusy:
     """Stand-in for BusyIndicator where there is no screen (and in tests)."""
 
     def __enter__(self):
@@ -3159,7 +3216,7 @@ class NotBusy(object):
 NOT_BUSY = NotBusy()
 
 
-class BusyIndicator(object):
+class BusyIndicator:
     """'with busy:' around something slow the main thread waits for
     (listing a remote folder, checking an rclone remote, ...): a
     highlighted spinner label covers the free right end of a frame's top
@@ -3172,8 +3229,8 @@ class BusyIndicator(object):
     that shows a dialog or leaves curses (ssh logins)."""
 
     FRAMES = "|/-\\"
-    # widest that fits the free border; {0} is the spinner frame
-    LABELS = ("[ {0} working ]", "[ {0} ]", "{0}")
+    # widest that fits the free border; {} is the spinner frame
+    LABELS = ("[ {} working ]", "[ {} ]", "{}")
     DELAY = 0.15        # quick operations don't flicker
     STEP = 0.12
 
@@ -3261,7 +3318,7 @@ def message(stdscr, text):
 # Pane (left/right file browser)
 # ----------------------------------------------------------------------
 
-class Pane(object):
+class Pane:
     def __init__(self, path, fs, busy=NOT_BUSY):
         self.fs = fs
         self.busy = busy
@@ -3281,7 +3338,7 @@ class Pane(object):
             self.error = ""
         except ConnectionLost as e:
             self.entries = []
-            self.error = "{0} - press F5 to reconnect".format(e)
+            self.error = "{} - press F5 to reconnect".format(e)
         except FsError as e:
             self.entries = []
             self.error = str(e)
@@ -3693,7 +3750,7 @@ def help_key_spans(line):
 VERIFY_TABS = ["COPIED", "SKIPPED", "RENAMED", "ERRORS"]
 
 
-class App(object):
+class App:
     def __init__(self, stdscr, start_path):
         self.stdscr = stdscr
         self.view = VIEW_NAV
@@ -3712,6 +3769,10 @@ class App(object):
         self.paused = False
         self.running = False
         self.run_thread = None
+        # Threads: the run worker writes item results/status/progress, the
+        # size worker only size_*, and the main thread only reads those while
+        # a run is going (attribute writes are atomic under the GIL). Only
+        # log_lines, appended from all threads, needs this lock.
         self.lock = threading.Lock()
         self.verify_tab = 0
         self.verify_index = 0
@@ -3744,25 +3805,25 @@ class App(object):
         curses.use_default_colors()
         self.inactive_frame_attr = curses.A_DIM
         # many 8-color terminals show bold red as bright red
-        self.bright_red_attr = curses.color_pair(4) | curses.A_BOLD
+        self.bright_red_attr = curses.color_pair(Color.RED) | curses.A_BOLD
         try:
             curses.start_color()
             # Bright variants when available; bold black would render as gray
             bright = curses.COLORS >= 16
             active_bg = curses.COLOR_WHITE + 8 if bright else curses.COLOR_WHITE
-            curses.init_pair(1, curses.COLOR_BLACK, active_bg)            # active pane hdr
-            curses.init_pair(2, curses.COLOR_YELLOW, -1)                  # dirs
-            curses.init_pair(3, curses.COLOR_GREEN, -1)                   # OK
-            curses.init_pair(4, curses.COLOR_RED, -1)                     # FAIL
-            curses.init_pair(5, curses.COLOR_MAGENTA, -1)                 # INCOMPLETE
-            curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)    # header bar
-            curses.init_pair(7, curses.COLOR_CYAN, -1)                    # DRY RUN OK
-            curses.init_pair(8, active_bg, -1)                            # active pane frame
+            curses.init_pair(Color.ACTIVE_HEADER, curses.COLOR_BLACK, active_bg)
+            curses.init_pair(Color.YELLOW, curses.COLOR_YELLOW, -1)
+            curses.init_pair(Color.GREEN, curses.COLOR_GREEN, -1)
+            curses.init_pair(Color.RED, curses.COLOR_RED, -1)
+            curses.init_pair(Color.MAGENTA, curses.COLOR_MAGENTA, -1)
+            curses.init_pair(Color.STATUSBAR, curses.COLOR_WHITE, curses.COLOR_BLUE)
+            curses.init_pair(Color.CYAN, curses.COLOR_CYAN, -1)
+            curses.init_pair(Color.ACTIVE_FRAME, active_bg, -1)
             if bright:
-                curses.init_pair(9, curses.COLOR_BLACK + 8, -1)           # inactive pane frame
-                self.inactive_frame_attr = curses.color_pair(9)
-                curses.init_pair(10, curses.COLOR_RED + 8, -1)            # bright red
-                self.bright_red_attr = curses.color_pair(10)
+                curses.init_pair(Color.GRAY, curses.COLOR_BLACK + 8, -1)
+                self.inactive_frame_attr = curses.color_pair(Color.GRAY)
+                curses.init_pair(Color.BRIGHT_RED, curses.COLOR_RED + 8, -1)
+                self.bright_red_attr = curses.color_pair(Color.BRIGHT_RED)
         except curses.error:
             pass
 
@@ -3792,7 +3853,7 @@ class App(object):
         if it is None:
             return "Paused between items - press P to resume" if self.paused else "Starting next item..."
         n = self.queue.index(it) + 1 if it in self.queue else 0
-        return "#{0} {1} | {2}".format(n, it.src_display(), it.progress.describe())
+        return "#{} {} | {}".format(n, it.src_display(), it.progress.describe())
 
     def last_queue_tail(self, n=5):
         return self.queue[-n:]
@@ -3837,7 +3898,7 @@ class App(object):
             except Exception as e:
                 # this thread must survive anything, or no size is ever
                 # estimated again
-                self.log("Size estimate failed for {0}: {1}".format(item.src_display(), e))
+                self.log("Size estimate failed for {}: {}".format(item.src_display(), e))
                 size = None
             if item.cancel_event.is_set():
                 # Deleted while we were scanning - discard the result.
@@ -3894,44 +3955,7 @@ class App(object):
             self.rsync_opts = opts
 
     def save_queue(self, path):
-        data = {
-            "rsync_opts": self.rsync_opts,
-            "rclone_opts": self.rclone_opts,
-            "items": [it.to_dict() for it in self.queue],
-        }
-        atomic_write(path, json.dumps(data, indent=2))
-
-    @staticmethod
-    def check_opts(data, key):
-        """A queue file's flag list for one tool, or None if absent."""
-        if key not in data:
-            return None
-        opts = data[key]
-        if (not isinstance(opts, list) or not opts or
-                not all(isinstance(o, str) and "\0" not in o for o in opts)):
-            raise ValueError("invalid {0} in queue file".format(key))
-        return opts
-
-    @staticmethod
-    def read_queue_file(path):
-        """Parse and validate a queue file. Returns (items, rsync_opts,
-        rclone_opts), each opts None if the file doesn't set them; raises
-        ValueError/KeyError/OSError. Nothing is applied, so a bad file
-        changes nothing."""
-        with open(path, "r") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            # backward compatibility with the old (opts-less) format
-            return [QueueItem.from_dict(d) for d in data], None, None
-        if not isinstance(data, dict):
-            raise ValueError("not a queue file")
-        rsync_opts = App.check_opts(data, "rsync_opts")
-        rclone_opts = App.check_opts(data, "rclone_opts")
-        for flags, opts in ((RsyncFlags, rsync_opts), (RcloneFlags, rclone_opts)):
-            if opts is not None and flags.problems(opts):
-                raise ValueError("{0} flags in queue file: {1}".format(
-                    flags.TOOL, flags.problems(opts)))
-        return [QueueItem.from_dict(d) for d in data.get("items", [])], rsync_opts, rclone_opts
+        QueueFile.save(path, self.queue, self.rsync_opts, self.rclone_opts)
 
     def confirm_file_opts(self, flags, opts):
         """Ask whether to use a queue file's flags for flags.TOOL. Returns
@@ -3941,29 +3965,29 @@ class App(object):
         # Flags in a file are someone else's choice - show them in full,
         # quoted, so a token with spaces can't disguise itself.
         shown = " ".join(shlex.quote(o) for o in opts)
-        question = "This queue file also sets the {0} flags: {1} . ".format(flags.TOOL, shown)
+        question = "This queue file also sets the {} flags: {} . ".format(flags.TOOL, shown)
         risky = flags.risky(opts)
         if risky:
             question += ("WARNING - these can delete or overwrite data, write outside the "
-                         "target or run commands: {0} . ".format(
+                         "target or run commands: {} . ".format(
                              " ".join(shlex.quote(o) for o in risky)))
         unchecked = flags.unchecked(opts)
         if unchecked:
             question += ("CHECK - mcrsync doesn't know what these do (they could e.g. send "
-                         "data elsewhere): {0} . ".format(
+                         "data elsewhere): {} . ".format(
                              " ".join(shlex.quote(o) for o in unchecked)))
         question += "Use these flags? (N = keep your current flags)"
         return opts if confirm(self.stdscr, question) else None
 
     def load_queue_interactive(self, path):
         try:
-            items, rsync_opts, rclone_opts = App.read_queue_file(path)
+            items, rsync_opts, rclone_opts = QueueFile.read(path)
         except KeyError as e:
-            message(self.stdscr, "Load failed: an item is missing the field {0}. "
+            message(self.stdscr, "Load failed: an item is missing the field {}. "
                     "Nothing was loaded.".format(e))
             return
         except (OSError, ValueError) as e:
-            message(self.stdscr, "Load failed: {0}. Nothing was loaded.".format(e))
+            message(self.stdscr, "Load failed: {}. Nothing was loaded.".format(e))
             return
         use_rsync = self.confirm_file_opts(RsyncFlags, rsync_opts)
         use_rclone = self.confirm_file_opts(RcloneFlags, rclone_opts)
@@ -3971,9 +3995,9 @@ class App(object):
         hosts = sorted(set(s.key() for it in self.queue for s in it.conn_specs()))
         extra = ""
         if hosts:
-            extra = (". It uses remote(s) {0} - you'll be asked to log in "
+            extra = (". It uses remote(s) {} - you'll be asked to log in "
                      "when you press F8.".format(", ".join(hosts)))
-        message(self.stdscr, "Loaded {0} item(s) from {1}{2}".format(
+        message(self.stdscr, "Loaded {} item(s) from {}{}".format(
             len(self.queue), path, extra))
 
     def load_queue(self, items, rsync_opts=None, rclone_opts=None):
@@ -4043,14 +4067,14 @@ class App(object):
                 if dead:
                     self.reconnect_needed = dead
                     self.paused = True
-                    self.log("CONNECTION LOST: {0} - press P to log in again and resume".format(
+                    self.log("CONNECTION LOST: {} - press P to log in again and resume".format(
                         self.registry.describe(dead)))
                     continue
                 self.queue_index = idx
-                self.log("Starting: {0} -> {1}".format(item.src_display(), item.dst_display()))
+                self.log("Starting: {} -> {}".format(item.src_display(), item.dst_display()))
                 if self.runner.run_item(item, self.log, self.opts_for(item.tool())):
                     break
-            self.log("Finished [{0}]: {1}".format(item.status, item.src_display()))
+            self.log("Finished [{}]: {}".format(item.status_label(), item.src_display()))
         self.running = False
         # Panes/curses calls must happen on the main thread - just flag it
         # and let the main loop pick it up and reload on its next tick.
@@ -4062,7 +4086,7 @@ class App(object):
         if self.paused and self.reconnect_needed:
             failed = self.registry.open_interactive(self.stdscr, self.reconnect_needed)
             if failed:
-                message(self.stdscr, "Still not connected to {0} - the run stays paused. "
+                message(self.stdscr, "Still not connected to {} - the run stays paused. "
                         "Press P to try again.".format(self.registry.describe(failed)))
                 return
             self.reconnect_needed = []
@@ -4090,7 +4114,7 @@ class App(object):
         failed = self.registry.open_interactive(self.stdscr, dead)
         self.reschedule_offline_sizes()
         if failed:
-            message(self.stdscr, "Could not connect to {0} - the run was not started.".format(
+            message(self.stdscr, "Could not connect to {} - the run was not started.".format(
                 self.registry.describe(failed)))
             return False
         return True
@@ -4122,7 +4146,7 @@ class App(object):
                     "first.".format(self.pane_name(other), other.fs.spec.key()))
             return
         if self.settings.error:
-            message(self.stdscr, "Could not read saved connection settings ({0}). The form "
+            message(self.stdscr, "Could not read saved connection settings ({}). The form "
                     "starts empty and won't be saved until the file is fixed.".format(
                         self.settings.error))
         if other.fs.kind == "rclone":
@@ -4130,7 +4154,7 @@ class App(object):
             self.connect_rclone_pane(pane)
             return
         last_kind = str(self.settings.section("last_connect").get("kind", "ssh"))
-        choice = pick_dialog(self.stdscr, "Connect {0} pane".format(self.pane_name(pane)),
+        choice = pick_dialog(self.stdscr, "Connect {} pane".format(self.pane_name(pane)),
                              "Connect this pane to:",
                              ["SSH host (copies with rsync)",
                               "rclone remote (copies with rclone)"],
@@ -4155,11 +4179,11 @@ class App(object):
             with self.busy:
                 names = RcloneCli.list_remotes()
         except FsError as e:
-            message(self.stdscr, "Can't use rclone: {0}".format(e))
+            message(self.stdscr, "Can't use rclone: {}".format(e))
             return
         usable = [n for n in names if RcloneSpec.NAME_RE.match(n)]
         if not usable:
-            message(self.stdscr, "No usable rclone remotes{0}. Set one up with 'rclone config' "
+            message(self.stdscr, "No usable rclone remotes{}. Set one up with 'rclone config' "
                     "first; mcrsync supports remote names made of letters, digits, _ and "
                     "-.".format(" (found: " + ", ".join(names) + ")" if names else ""))
             return
@@ -4168,7 +4192,7 @@ class App(object):
         label = "Remote from your rclone config:"
         if len(usable) < len(names):
             label = "Remote (names with other characters than letters, digits, _ - are not shown):"
-        idx = pick_dialog(self.stdscr, "Connect {0} pane to rclone".format(self.pane_name(pane)),
+        idx = pick_dialog(self.stdscr, "Connect {} pane to rclone".format(self.pane_name(pane)),
                           label, [n + ":" for n in usable],
                           usable.index(last_remote) if last_remote in usable else 0)
         if idx is None:
@@ -4177,13 +4201,13 @@ class App(object):
         with self.busy:
             err = self.registry.open_rclone(spec)
         if err:
-            message(self.stdscr, "Can't use {0}: {1}".format(spec.key(), err))
+            message(self.stdscr, "Can't use {}: {}".format(spec.key(), err))
             return
         fs = self.registry.fs_for(spec)
         value = str(last.get("path", "")) if spec.remote == last_remote else ""
         error = ""
         while True:
-            result = form_dialog(self.stdscr, "Connect {0} pane to {1}:".format(
+            result = form_dialog(self.stdscr, "Connect {} pane to {}:".format(
                 self.pane_name(pane), spec.remote), [
                     ("Start path", value, "Folder to start in, e.g. bucket/photos. "
                                           "Blank = top level."),
@@ -4208,9 +4232,9 @@ class App(object):
         pane.local_path = pane.path
         pane.switch_fs(fs, path)
         self.reschedule_offline_sizes()
-        self.log("Connected {0} pane to {1}".format(self.pane_name(pane), spec.key()))
+        self.log("Connected {} pane to {}".format(self.pane_name(pane), spec.key()))
         if not fs.remote.modtime_ok:
-            message(self.stdscr, "Note: {0} can't store modification times. rclone's --update "
+            message(self.stdscr, "Note: {} can't store modification times. rclone's --update "
                     "then compares with upload times, so 'newer on target' (and the conflicts "
                     "it finds) isn't reliable for this remote. The F8 screen repeats this "
                     "warning.".format(spec.key()))
@@ -4236,7 +4260,7 @@ class App(object):
                 ("Base path", values[3], "Folder to start in. Blank or ~ = home directory."),
                 ("Key file", values[4], "Private key file. Leave blank to log in with a password."),
             ]
-            result = form_dialog(self.stdscr, "Connect {0} pane via SSH".format(
+            result = form_dialog(self.stdscr, "Connect {} pane via SSH".format(
                 self.pane_name(pane)), fields, error)
             if result is None:
                 return
@@ -4267,14 +4291,14 @@ class App(object):
                     path = fs.resolve("")
             except FsError as e2:
                 message(self.stdscr, "Connected, but can't list the remote home directory: "
-                        "{0}".format(e2))
+                        "{}".format(e2))
                 return
-            message(self.stdscr, "Base path '{0}' can't be opened ({1}) - showing the home "
+            message(self.stdscr, "Base path '{}' can't be opened ({}) - showing the home "
                     "directory instead.".format(values[3], e))
         pane.local_path = pane.path
         pane.switch_fs(fs, path)
         self.reschedule_offline_sizes()
-        self.log("Connected {0} pane to {1}".format(self.pane_name(pane), spec.key()))
+        self.log("Connected {} pane to {}".format(self.pane_name(pane), spec.key()))
 
     def validate_remote_form(self, values):
         user, host, port, base, keyfile = values
@@ -4286,19 +4310,19 @@ class App(object):
                  if it.status != STATUS_OK and
                  spec.key() in [s.key() for s in it.conn_specs()]]
         if users and self.running:
-            message(self.stdscr, "The running queue uses {0} - wait for it to finish "
+            message(self.stdscr, "The running queue uses {} - wait for it to finish "
                     "before disconnecting.".format(spec.key()))
             return
-        question = "Disconnect the {0} pane from {1} and go back to {2}?".format(
+        question = "Disconnect the {} pane from {} and go back to {}?".format(
             self.pane_name(pane), spec.key(), pane.local_path)
         if users:
-            question += (" {0} unfinished queue item(s) use this host; you'll be asked "
+            question += (" {} unfinished queue item(s) use this host; you'll be asked "
                          "to log in again when you press F8.".format(len(users)))
         if not confirm(self.stdscr, question):
             return
         self.registry.close(spec)
         pane.switch_fs(LOCAL_FS, pane.local_path)
-        self.log("Disconnected {0} pane from {1}".format(self.pane_name(pane), spec.key()))
+        self.log("Disconnected {} pane from {}".format(self.pane_name(pane), spec.key()))
 
     def reconnect_panes_if_needed(self):
         for pane in (self.left, self.right):
@@ -4306,10 +4330,10 @@ class App(object):
             if spec is None or self.registry.is_open(spec):
                 continue
             if spec.kind == "rclone":
-                question = "{0} isn't usable right now ({1}). Try again?".format(
+                question = "{} isn't usable right now ({}). Try again?".format(
                     spec.key(), self.registry.problem(spec) or "not checked yet")
             else:
-                question = "The connection to {0} is closed. Log in again?".format(spec.key())
+                question = "The connection to {} is closed. Log in again?".format(spec.key())
             if confirm(self.stdscr, question):
                 failed = self.registry.open_interactive(self.stdscr, [spec])
                 if failed and spec.kind == "rclone":
@@ -4325,7 +4349,7 @@ class App(object):
                     rows.append((s, d, r))
                 if it.copied_files and not it.copied_list:
                     rows.append((it.src_display(), it.dst_display(),
-                                 "{0} file(s) transferred".format(it.copied_files)))
+                                 "{} file(s) transferred".format(it.copied_files)))
         elif tab_name == "SKIPPED":
             for it in self.queue:
                 for c in it.conflicts:
@@ -4370,7 +4394,7 @@ class App(object):
 
     def draw_too_small(self, h, w):
         lines = ["Terminal too small",
-                 "({0} x {1}, need {2} x {3})".format(w, h, App.MIN_W, App.MIN_H),
+                 "({} x {}, need {} x {})".format(w, h, App.MIN_W, App.MIN_H),
                  "Enlarge it to continue",
                  "(a run keeps going)" if self.running else "q: quit"]
         for i, line in enumerate(lines):
@@ -4435,7 +4459,7 @@ class App(object):
                 state = "PAUSED"
             else:
                 state = "RUNNING"
-            run_state = "[{0}{1}] ".format("DRY RUN " if self.run_dry else "", state)
+            run_state = "[{}{}] ".format("DRY RUN " if self.run_dry else "", state)
         bar = (run_state + help_text)
 
         # Whole-queue progress: in every view while running. It takes
@@ -4446,7 +4470,7 @@ class App(object):
             if percent is not None:
                 ok_count = sum(1 for it in self.queue if it.status == STATUS_OK)
                 eta_str = format_duration(eta) if eta is not None else "nan"
-                right_text = " {0}/{1} items, {2:.0f}% done | ETA: {3}".format(
+                right_text = " {}/{} items, {:.0f}% done | ETA: {}".format(
                     ok_count, len(self.queue), percent, eta_str)
 
         avail = max(0, w - 1)
@@ -4456,23 +4480,23 @@ class App(object):
             if room >= len(run_state):
                 bar = bar[:room].ljust(room) + right_text
                 hints_end = room
-        safe_addstr(self.stdscr, h - 1, 0, bar.ljust(avail), curses.color_pair(6))
+        safe_addstr(self.stdscr, h - 1, 0, bar.ljust(avail), curses.color_pair(Color.STATUSBAR))
         for m in HINT_KEY_RE.finditer(help_text):
             start = len(run_state) + m.start(1)
             end = min(len(run_state) + m.end(1), hints_end)
             if start < end:
                 safe_addstr(self.stdscr, h - 1, start, bar[start:end],
-                            curses.color_pair(6) | curses.A_BOLD)
+                            curses.color_pair(Color.STATUSBAR) | curses.A_BOLD)
 
     def draw_pane(self, win, pane, title, active):
         win.erase()
-        frame_attr = curses.color_pair(8) | curses.A_BOLD if active else self.inactive_frame_attr
+        frame_attr = curses.color_pair(Color.ACTIVE_FRAME) | curses.A_BOLD if active else self.inactive_frame_attr
         win.attron(frame_attr)
         win.border()
         win.attroff(frame_attr)
         h, w = win.getmaxyx()
-        hdr_attr = curses.color_pair(1) if active else curses.A_BOLD
-        safe_addstr(win, 0, 2, " {0} [{1}] ".format(title, pane.fs.label()), hdr_attr)
+        hdr_attr = curses.color_pair(Color.ACTIVE_HEADER) if active else curses.A_BOLD
+        safe_addstr(win, 0, 2, " {} [{}] ".format(title, pane.fs.label()), hdr_attr)
         safe_addstr(win, 1, 2, pane.fs.display_path(pane.path)[:w - 4], curses.A_DIM)
         page_h = h - 3
         for i in range(page_h):
@@ -4483,14 +4507,14 @@ class App(object):
             label = ("/" + name) if isdir else (" " + name)
             attr = 0
             if isdir:
-                attr = curses.color_pair(2)
+                attr = curses.color_pair(Color.YELLOW)
             if idx == pane.index:
                 attr |= curses.A_REVERSE
             safe_addstr(win, 2 + i, 2, label, attr)
         if pane.error:
             for i, line in enumerate(textwrap.wrap("Can't list folder: " + pane.error,
                                                    max(10, w - 4))[:page_h]):
-                safe_addstr(win, 2 + i, 2, line, curses.color_pair(4))
+                safe_addstr(win, 2 + i, 2, line, curses.color_pair(Color.RED))
         elif not pane.entries:
             safe_addstr(win, 2, 2, "(empty)", curses.A_DIM)
 
@@ -4507,13 +4531,13 @@ class App(object):
 
         bwin = curses.newwin(bottom_h, w, pane_h, 0)
         bwin.border()
-        self.draw_frame_title(bwin, " QUEUE (last 5) - {0} item(s) total ".format(
+        self.draw_frame_title(bwin, " QUEUE (last 5) - {} item(s) total ".format(
             len(self.queue)))
         tail = self.last_queue_tail(5)
         for i, it in enumerate(tail):
             n = len(self.queue) - len(tail) + i + 1
-            line = "#{0:<4d} {1}  ->  {2}   [{3}]".format(
-                n, it.src_display(), it.dst_display(), it.status)
+            line = "#{:<4d} {}  ->  {}   [{}]".format(
+                n, it.src_display(), it.dst_display(), it.status_label())
             attr = self.status_attr(it.status)
             safe_addstr(bwin, 1 + i, 2, line, attr)
         self.draw_progress_line(bwin, bottom_h - 2)
@@ -4524,20 +4548,20 @@ class App(object):
         if not text:
             return
         it = self.running_item()
-        attr = curses.A_BOLD | curses.color_pair(7)
+        attr = curses.A_BOLD | curses.color_pair(Color.CYAN)
         if (it is not None and it.progress.phase == Progress.DELETING) or self.reconnect_needed:
-            attr = curses.A_BOLD | curses.color_pair(4)
+            attr = curses.A_BOLD | curses.color_pair(Color.RED)
         safe_addstr(win, y, 2, "> " + text, attr)
 
     def status_attr(self, status):
         if status == STATUS_OK:
-            return curses.color_pair(3)
+            return curses.color_pair(Color.GREEN)
         if status == STATUS_FAIL:
-            return curses.color_pair(4)
+            return curses.color_pair(Color.RED)
         if status in (STATUS_INCOMPLETE, STATUS_DRY_INCOMPLETE):
-            return curses.color_pair(5)
+            return curses.color_pair(Color.MAGENTA)
         if status == STATUS_DRY_OK:
-            return curses.color_pair(7)
+            return curses.color_pair(Color.CYAN)
         return 0
 
     def item_size_display(self, it):
@@ -4601,7 +4625,7 @@ class App(object):
             # length (e.g. "0.0 B" vs "1023.9 T") still line up on their
             # right edge (units column-aligned), then add one explicit
             # separator space so it can never touch the "#" column.
-            files_str = "{0:,}".format(it.size_files) if it.size_files is not None else ""
+            files_str = "{:,}".format(it.size_files) if it.size_files is not None else ""
             line = (size_str[:size_w - 1].rjust(size_w - 1) + " " +
                     files_str[:files_w - 2].rjust(files_w - 2) + "  " +
                     str(idx + 1)[:num_w - 1].ljust(num_w) +
@@ -4612,7 +4636,7 @@ class App(object):
             # with spaces all the way to the window edge (safe_addstr clips
             # to the actual visible width on its own), per request: no
             # leftover characters should show past the status text.
-            safe_addstr(win, 2 + i, x_status, it.status.ljust(200), attr)
+            safe_addstr(win, 2 + i, x_status, it.status_label().ljust(200), attr)
         self.draw_progress_line(win, h - 3)
         win.noutrefresh()
 
@@ -4628,7 +4652,7 @@ class App(object):
             self.log_scroll = None
         else:
             scroll = max(0, self.log_scroll)
-        title = " RUN LOG - {0} line(s){1}{2} ".format(
+        title = " RUN LOG - {} line(s){}{} ".format(
             len(lines), ", oldest dropped" if self.log_dropped else "",
             "" if self.log_scroll is None else " - scrolled, End: follow new lines")
         self.draw_frame_title(win, title)
@@ -4639,9 +4663,9 @@ class App(object):
             attr = 0
             if ("DELETED" in line or "CONNECTION LOST" in line or
                     line[9:].startswith(("rsync", "rclone error"))):
-                attr = curses.color_pair(4)
+                attr = curses.color_pair(Color.RED)
             elif "CONFLICT" in line:
-                attr = curses.color_pair(5)
+                attr = curses.color_pair(Color.MAGENTA)
             safe_addstr(win, 1 + i, 2, line, attr)
         if not lines:
             safe_addstr(win, 2, 2, "(nothing logged yet - start a run with F8)", curses.A_DIM)
@@ -4666,7 +4690,7 @@ class App(object):
             self.log_scroll = 0
         elif c == curses.KEY_END:
             self.log_scroll = None
-        elif c in (27, ord('g')):
+        elif c in (Keys.ESC, ord('g')):
             self.view = self.prev_view
 
     def draw_verify(self, h, w):
@@ -4725,19 +4749,19 @@ class App(object):
     def options_tail(self, text_w):
         """(indent, text, attr) lines below the checkboxes: other flags,
         the exact command and every warning, per tool."""
-        red = curses.color_pair(4) | curses.A_BOLD
+        red = curses.color_pair(Color.RED) | curses.A_BOLD
         tail = []
         for tool in self.options_tools():
             flags = FLAG_SETS[tool]
             opts = self.opts_for(tool)
             tail.append((2, "", 0))
             others = " ".join(shlex.quote(o) for o in flags.others(opts)) or "(none)"
-            for i, line in enumerate(textwrap.wrap("{0} - Other flags: {1}".format(tool, others),
+            for i, line in enumerate(textwrap.wrap("{} - Other flags: {}".format(tool, others),
                                                    text_w, break_on_hyphens=False)):
                 tail.append((2 if i == 0 else 4, line, 0))
             idx, cmd = self.options_preview_cmd(tool)
             if idx is not None:
-                tail.append((2, "Command for item #{0} of {1} (other {2} items get their own "
+                tail.append((2, "Command for item #{} of {} (other {} items get their own "
                                 "paths):".format(idx + 1, len(self.queue), tool), curses.A_BOLD))
                 for line in textwrap.wrap(cmd, text_w, break_on_hyphens=False):
                     tail.append((4, line, curses.A_REVERSE))
@@ -4747,15 +4771,15 @@ class App(object):
                 warnings.append(("CAN'T RUN: " + problem[:1].upper() + problem[1:], red))
             risky = flags.risky(opts)
             if risky:
-                warnings.append(("CAUTION: these {0} flags can delete or overwrite data, write "
-                                 "outside the target or run commands: {1}".format(
+                warnings.append(("CAUTION: these {} flags can delete or overwrite data, write "
+                                 "outside the target or run commands: {}".format(
                                      tool, " ".join(risky)), red))
             unchecked = flags.unchecked(opts)
             if unchecked:
-                warnings.append(("CHECK: mcrsync doesn't know what these {0} flags do (they could "
-                                 "e.g. send data elsewhere): {1}".format(
+                warnings.append(("CHECK: mcrsync doesn't know what these {} flags do (they could "
+                                 "e.g. send data elsewhere): {}".format(
                                      tool, " ".join(unchecked)),
-                                 curses.color_pair(5) | curses.A_BOLD))
+                                 curses.color_pair(Color.MAGENTA) | curses.A_BOLD))
             if tool == TOOL_RCLONE and flags.has(opts, "l", "--links"):
                 warnings.append(("", 0))
                 warnings.append(("Note: -l/--links is left out for copies INTO a local folder - "
@@ -4767,15 +4791,15 @@ class App(object):
                                  "'rclone copy'; single files are still copied with "
                                  "'rclone copyto'.", 0))
             if flags.is_dry_run(opts):
-                warnings.append(("DRY RUN (-n): nothing will be copied or created by {0}. Items "
+                warnings.append(("DRY RUN (-n): nothing will be copied or created by {}. Items "
                                  "end up as DRY RUN OK / DRY RUN INCOMPLETE.".format(tool),
-                                 curses.color_pair(7) | curses.A_BOLD))
+                                 curses.color_pair(Color.CYAN) | curses.A_BOLD))
             if not flags.has_update(opts):
-                warnings.append(("WARNING: -u/--update is NOT set for {0} - newer files in the "
+                warnings.append(("WARNING: -u/--update is NOT set for {} - newer files in the "
                                  "target could be overwritten!".format(tool), red))
             if tool == TOOL_RCLONE:
                 for key in self.no_modtime_remotes():
-                    warnings.append(("WARNING: {0} can't store modification times - --update "
+                    warnings.append(("WARNING: {} can't store modification times - --update "
                                      "compares with upload times there, so newer target files "
                                      "may be overwritten or reported as conflicts "
                                      "wrongly.".format(key), red))
@@ -4790,7 +4814,7 @@ class App(object):
         win = curses.newwin(h - 1, w, 0, 0)
         win.border()
         self.draw_frame_title(win, " RUN OPTIONS - apply to ALL queued items of each tool ")
-        red = curses.color_pair(4) | curses.A_BOLD
+        red = curses.color_pair(Color.RED) | curses.A_BOLD
 
         # Command and warnings get their rows before the checkboxes: flags may
         # come from a loaded queue file, and a hidden one could be dangerous.
@@ -4806,13 +4830,13 @@ class App(object):
             if row_tool != tool:
                 tool = row_tool
                 count = sum(1 for it in self.pending_items() if it.tool() == tool)
-                lines.append(("{0} flags ({1} item{2}):".format(
+                lines.append(("{} flags ({} item{}):".format(
                     tool, count, "" if count == 1 else "s"), curses.A_UNDERLINE, None))
             flags = FLAG_SETS[row_tool]
             short, long_name, desc, is_risky = choice
             mark = "[x]" if flags.has(self.opts_for(row_tool), short, long_name) else "[ ]"
-            name = "-{0}, {1}".format(short, long_name) if short else long_name
-            text = "{0} {1} {2:<20} {3}".format(">" if n == self.options_index else " ",
+            name = "-{}, {}".format(short, long_name) if short else long_name
+            text = "{} {} {:<20} {}".format(">" if n == self.options_index else " ",
                                                 mark, name, desc)
             attr = red if is_risky else 0
             if n == self.options_index:
@@ -4850,7 +4874,7 @@ class App(object):
         try:
             cmd = self.runner.item_cmd(item, self.opts_for(tool))
         except FsError as e:
-            return idx, "(no command: {0})".format(e)
+            return idx, "(no command: {})".format(e)
         return idx, " ".join(shlex.quote(o) for o in cmd)
 
     def handle_options_key(self, c):
@@ -4868,14 +4892,14 @@ class App(object):
             else:
                 flash(self.stdscr)
         elif c == ord('e'):
-            new_line = prompt_string(self.stdscr, "{0} flags:".format(tool),
+            new_line = prompt_string(self.stdscr, "{} flags:".format(tool),
                                       " ".join(shlex.quote(o) for o in self.opts_for(tool)))
             if new_line is None:
                 return
             try:
                 parsed = shlex.split(new_line)
             except ValueError as e:
-                message(self.stdscr, "Could not parse flags: {0}".format(e))
+                message(self.stdscr, "Could not parse flags: {}".format(e))
                 return
             if not parsed:
                 message(self.stdscr, "At least one flag is required - keeping previous options.")
@@ -4887,12 +4911,12 @@ class App(object):
                 return
             self.set_opts(tool, parsed)
         elif c == ord('d'):
-            if confirm(self.stdscr, "Restore default {0} flags ({1})?".format(
+            if confirm(self.stdscr, "Restore default {} flags ({})?".format(
                     tool, " ".join(flags.DEFAULTS))):
                 self.set_opts(tool, list(flags.DEFAULTS))
-        elif c in (10, 13):
+        elif c in Keys.ENTER:
             self.confirm_and_run()
-        elif c == 27:
+        elif c == Keys.ESC:
             self.view = VIEW_NAV
 
     def confirm_and_run(self):
@@ -4903,7 +4927,7 @@ class App(object):
                 message(self.stdscr, "Can't run: " + problem)
                 return
             if not flags.has_update(self.opts_for(tool)) and not confirm(
-                    self.stdscr, "-u/--update is not set for {0} - newer target files may be "
+                    self.stdscr, "-u/--update is not set for {} - newer target files may be "
                     "overwritten. Continue anyway?".format(tool)):
                 return
         if self.ensure_queue_connections():
@@ -4928,7 +4952,7 @@ class App(object):
         if len(HELP_TEXT) > page_h:
             pct = 100 if max_scroll == 0 else int(100 * self.help_scroll / max_scroll)
             safe_addstr(win, h - 3, 2,
-                        "-- line {0}/{1} ({2}%) - Up/Down/PgUp/PgDn to scroll --".format(
+                        "-- line {}/{} ({}%) - Up/Down/PgUp/PgDn to scroll --".format(
                             self.help_scroll + 1, len(HELP_TEXT), pct), curses.A_DIM)
         win.noutrefresh()
 
@@ -4943,7 +4967,7 @@ class App(object):
             self.help_scroll = max(0, self.help_scroll - page_h)
         elif c == curses.KEY_NPAGE:
             self.help_scroll += page_h
-        elif c in (27, ord('h'), ord('?')):
+        elif c in (Keys.ESC, ord('h'), ord('?')):
             self.view = self.prev_view
 
     # ---------------- input handling ----------------
@@ -5015,16 +5039,16 @@ class App(object):
             name = prompt_string(self.stdscr, "Save queue as (path):", "queue.json")
             if name:
                 if os.path.isdir(name):
-                    message(self.stdscr, "'{0}' is a folder - type a file name.".format(name))
+                    message(self.stdscr, "'{}' is a folder - type a file name.".format(name))
                     return True
                 if os.path.lexists(name) and not confirm(
-                        self.stdscr, "'{0}' already exists. Overwrite it?".format(name)):
+                        self.stdscr, "'{}' already exists. Overwrite it?".format(name)):
                     return True
                 try:
                     self.save_queue(name)
-                    message(self.stdscr, "Saved {0} item(s) to {1}".format(len(self.queue), name))
+                    message(self.stdscr, "Saved {} item(s) to {}".format(len(self.queue), name))
                 except OSError as e:
-                    message(self.stdscr, "Save failed: {0}".format(e))
+                    message(self.stdscr, "Save failed: {}".format(e))
         elif c == ord('l'):
             if self.running:
                 message(self.stdscr, "A run is in progress - load a queue after it has finished.")
@@ -5050,7 +5074,7 @@ class App(object):
         pane = self.left if self.active == "left" else self.right
         h, w = self.stdscr.getmaxyx()
         page_h = h - App.NAV_QUEUE_H - 4
-        if c == 9:  # Tab
+        if c == Keys.TAB:
             self.active = "right" if self.active == "left" else "left"
         elif c == curses.KEY_F5:
             self.reconnect_panes_if_needed()
@@ -5069,9 +5093,9 @@ class App(object):
             pane.move(-len(pane.entries), page_h)
         elif c == curses.KEY_END:
             pane.move(len(pane.entries), page_h)
-        elif c in (curses.KEY_LEFT, curses.KEY_BACKSPACE, 127, 8):
+        elif c == curses.KEY_LEFT or c in Keys.BACKSPACE:
             pane.go_parent()
-        elif c == curses.KEY_RIGHT or c in (10, 13):
+        elif c == curses.KEY_RIGHT or c in Keys.ENTER:
             pane.enter()
         elif c == ord('c'):
             if self.active != "left":
@@ -5086,7 +5110,7 @@ class App(object):
             dst_full = self.right.fs.pathmod.join(self.right.path, name)
             item = self.add_to_queue(src_full, dst_full, is_dir,
                                      self.left.fs.spec, self.right.fs.spec)
-            self.log("Queued ({0}): {1} -> {2}".format(
+            self.log("Queued ({}): {} -> {}".format(
                 "dir" if is_dir else "file", item.src_display(), item.dst_display()))
         elif c == curses.KEY_F2:
             self.rename_selected(pane)
@@ -5101,7 +5125,7 @@ class App(object):
         old_name, is_dir = sel
         kind = "folder" if is_dir else "file"
         confirmed, new_name = modal_input_dialog(
-            self.stdscr, "Rename", "New name for {0} '{1}':".format(kind, old_name),
+            self.stdscr, "Rename", "New name for {} '{}':".format(kind, old_name),
             default=old_name)
         if not confirmed:
             return
@@ -5121,17 +5145,17 @@ class App(object):
                 if not exists:
                     pane.fs.rename(old_full, new_full)
         except FsError as e:
-            message(self.stdscr, "Rename failed: {0}".format(e))
+            message(self.stdscr, "Rename failed: {}".format(e))
             return
         if exists:
-            message(self.stdscr, "'{0}' already exists - not overwriting.".format(new_name))
+            message(self.stdscr, "'{}' already exists - not overwriting.".format(new_name))
             return
         pane.reload()
         for i, (name, _) in enumerate(pane.entries):
             if name == new_name:
                 pane.index = i
                 break
-        self.log("Renamed: {0} -> {1}".format(pane.fs.display_path(old_full), new_name))
+        self.log("Renamed: {} -> {}".format(pane.fs.display_path(old_full), new_name))
 
     def create_folder(self, pane):
         confirmed, name = modal_input_dialog(
@@ -5152,17 +5176,17 @@ class App(object):
                 if not exists:
                     pane.fs.mkdir(new_full)
         except FsError as e:
-            message(self.stdscr, "Create folder failed: {0}".format(e))
+            message(self.stdscr, "Create folder failed: {}".format(e))
             return
         if exists:
-            message(self.stdscr, "'{0}' already exists.".format(name))
+            message(self.stdscr, "'{}' already exists.".format(name))
             return
         pane.reload()
         for i, (nm, _) in enumerate(pane.entries):
             if nm == name:
                 pane.index = i
                 break
-        self.log("Created folder: {0}".format(pane.fs.display_path(new_full)))
+        self.log("Created folder: {}".format(pane.fs.display_path(new_full)))
 
     def handle_queue_key(self, c):
         h, w = self.stdscr.getmaxyx()
@@ -5188,7 +5212,7 @@ class App(object):
     def handle_verify_key(self, c):
         h, w = self.stdscr.getmaxyx()
         page_h = h - 5
-        if c == 9:
+        if c == Keys.TAB:
             self.verify_tab = (self.verify_tab + 1) % len(VERIFY_TABS)
             self.verify_index = 0
         elif c == curses.KEY_UP:
@@ -5199,9 +5223,9 @@ class App(object):
             self.verify_index = max(0, self.verify_index - page_h)
         elif c == curses.KEY_NPAGE:
             self.verify_index += page_h
-        elif c == 27:
+        elif c == Keys.ESC:
             self.view = VIEW_NAV
-        elif c in (10, 13):
+        elif c in Keys.ENTER:
             self.resolve_selected_conflict()
 
     def resolve_selected_conflict(self):
@@ -5218,12 +5242,16 @@ class App(object):
             message(self.stdscr, "This conflict was found by a dry run, so nothing was copied "
                     "yet. Remove -n in the F8 options and run for real, then resolve it here.")
             return
+        if self.running:
+            # the run may be redoing this very item (it retries INCOMPLETE ones)
+            message(self.stdscr, "A run is in progress - resolve conflicts after it has finished.")
+            return
         if it.status != STATUS_INCOMPLETE:
             # a newer run replaced this item's results while we were looking
             return
         choice = prompt_string(
             self.stdscr,
-            "{0}: (S)kip / (R)ename existing / (A)utorename incoming:".format(c.relpath), "")
+            "{}: (S)kip / (R)ename existing / (A)utorename incoming:".format(c.relpath), "")
         choice = (choice or "").strip().lower()
         action = {"s": "skip", "r": "rename", "a": "autorename"}.get(choice[:1] if choice else "")
         if not action:
@@ -5235,12 +5263,12 @@ class App(object):
         with self.busy:
             ok, err = self.runner.resolve_conflict(it, c, action)
         if ok:
-            message(self.stdscr, "Resolved {0}: {1}".format(c.relpath, c.remark))
+            message(self.stdscr, "Resolved {}: {}".format(c.relpath, c.remark))
             # if any conflicts remain unresolved, item stays INCOMPLETE
             if all(cc.resolution is not None for cc in it.conflicts):
                 it.status = STATUS_OK
         else:
-            message(self.stdscr, "Resolution failed: {0}".format(err))
+            message(self.stdscr, "Resolution failed: {}".format(err))
 
 
 # ----------------------------------------------------------------------
@@ -5253,7 +5281,7 @@ UPDATE_URL = "https://github.com/winternet-studio/mcrsync/releases/latest/downlo
 VERSION_RE = re.compile(br'^VERSION = "(\d+)\.(\d+)\.(\d+)"$', re.M)
 
 
-class SelfUpdater(object):
+class SelfUpdater:
     """`mcrsync selfupdate`: replaces the running script file (symlinks
     followed) with the latest release if that is newer, keeping its
     permissions."""
@@ -5279,7 +5307,7 @@ class SelfUpdater(object):
         out, err = p.communicate()
         if p.returncode != 0:
             raise RuntimeError(err.decode("utf-8", "replace").strip()
-                               or "curl exited with {0}".format(p.returncode))
+                               or "curl exited with {}".format(p.returncode))
         return out
 
     def check(self, data):
@@ -5290,7 +5318,7 @@ class SelfUpdater(object):
         try:
             compile(data, self.url, "exec")
         except SyntaxError as e:
-            raise RuntimeError("the download is not valid Python: {0}".format(e))
+            raise RuntimeError("the download is not valid Python: {}".format(e))
         return tuple(int(n) for n in m.groups())
 
     def replace(self, data):
@@ -5312,23 +5340,23 @@ class SelfUpdater(object):
 
     def run(self):
         try:
-            print("Downloading {0}".format(self.url))
+            print("Downloading {}".format(self.url))
             data = self.download()
             latest = self.check(data)
             current = tuple(int(n) for n in VERSION.split("."))
             if latest <= current:
-                print("Already up to date ({0}).".format(VERSION))
+                print("Already up to date ({}).".format(VERSION))
                 return 0
             latest = ".".join(str(n) for n in latest)
-            print("Updating {0} -> {1}".format(VERSION, latest))
+            print("Updating {} -> {}".format(VERSION, latest))
             self.replace(data)
         except PermissionError:
-            print("No permission to replace {0}. Try again with sudo.".format(self.path))
+            print("No permission to replace {}. Try again with sudo.".format(self.path))
             return 1
         except Exception as e:
-            print("Update failed, nothing was changed: {0}".format(e))
+            print("Update failed, nothing was changed: {}".format(e))
             return 1
-        print("Updated {0}".format(self.path))
+        print("Updated {}".format(self.path))
         return 0
 
 

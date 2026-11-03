@@ -92,7 +92,7 @@ class FlagAttackTest(unittest.TestCase):
                 with open(path, "w") as f:
                     json.dump({key: opts, "items": [{"src": "/a", "dst": "/b"}]}, f)
                 with self.assertRaises(ValueError, msg=key):
-                    m.App.read_queue_file(path)
+                    m.QueueFile.read(path)
         finally:
             shutil.rmtree(tmp)
 
