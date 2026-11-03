@@ -249,11 +249,17 @@ Press `O` and choose *rclone remote* to show a remote from your own `rclone conf
 
 ## Releasing
 
-Versions follow [semantic versioning](https://semver.org). To release, set `VERSION` in `mcrsync.py`, commit, then push a matching tag:
+Versions follow [semantic versioning](https://semver.org). To release, run `php prepare-release.phpcli` **or** follow steps:
+
+1. List the commits since the last release with `git log --oneline v2.0.0..HEAD` (use the last tag), and add the ones users would care about under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+2. Rename that heading to the new version and date, e.g. `## [2.1.0] - 2026-11-03`, and add a new empty `## [Unreleased]` above it.
+3. Set `VERSION` in `mcrsync.py`, commit, then push a matching tag:
+
+Then create new tag:
 
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 The [release workflow](.github/workflows/release.yml) then creates the GitHub release with `mcrsync.py` attached, which is what the install commands and `selfupdate` download.

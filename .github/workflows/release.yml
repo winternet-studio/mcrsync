@@ -24,7 +24,15 @@ jobs:
             exit 1
           fi
 
+      - name: Take the release notes from CHANGELOG.md
+        run: |
+          awk -v head="## [${GITHUB_REF_NAME#v}]" '/^## \[/ { p = index($0, head) == 1; next } p' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no entries under a \"## [${GITHUB_REF_NAME#v}]\" heading"
+            exit 1
+          fi
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" mcrsync.py --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" mcrsync.py --title "$GITHUB_REF_NAME" --notes-file notes.md

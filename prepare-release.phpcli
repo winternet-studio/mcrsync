@@ -1,0 +1,88 @@
+<?php
+/*
+Prepares a release: adds the commits since the latest tag to CHANGELOG.md
+and sets VERSION in mcrsync.py. Review CHANGELOG.md afterwards.
+
+Usage: php prepare-release.phpcli   (asks whether it's a major, minor or patch release)
+*/
+
+class Release {
+
+	const CHANGELOG = __DIR__ .'/CHANGELOG.md';
+	const SCRIPT = __DIR__ .'/mcrsync.py';
+
+	public static function run() {
+		$latest = self::git('describe --tags --abbrev=0 --match "v*"');
+		if (!preg_match('/^v(\d+)\.(\d+)\.(\d+)$/', $latest[0], $m)) {
+			self::fail('Latest tag is not a version: '. $latest[0]);
+		}
+		$version = self::askVersion((int) $m[1], (int) $m[2], (int) $m[3], $latest[0]);
+
+		$commits = self::git('log --oneline '. $latest[0] .'..HEAD');
+		if (!$commits) {
+			self::fail('No commits since '. $latest[0]);
+		}
+
+		self::updateChangelog($version, $commits);
+		self::updateScript($version);
+
+		echo 'v'. $version . PHP_EOL;
+		sleep(3);
+	}
+
+	private static function askVersion($major, $minor, $patch, $latest) {
+		$options = [
+			'1' => ($major + 1) .'.0.0',
+			'2' => $major .'.'. ($minor + 1) .'.0',
+			'3' => $major .'.'. $minor .'.'. ($patch + 1),
+		];
+		echo 'Latest release is '. $latest .'. Which kind of release is this?'. PHP_EOL;
+		echo '  1) major  v'. $options['1'] . PHP_EOL;
+		echo '  2) minor  v'. $options['2'] . PHP_EOL;
+		echo '  3) patch  v'. $options['3'] . PHP_EOL;
+		$answer = trim((string) readline('Choose 1, 2 or 3: '));
+		if (!isset($options[$answer])) {
+			self::fail('Cancelled.');
+		}
+		return $options[$answer];
+	}
+
+	private static function updateChangelog($version, $commits) {
+		// The type of change (Added, Changed, Fixed, ...) is filled in by hand
+		$section = '## ['. $version .'] - '. date('Y-m-d') ."\n\n### \n\n";
+		foreach ($commits as $commit) {
+			$section .= '- '. $commit ."\n";
+		}
+		self::replaceOnce(self::CHANGELOG, "/^## \\[Unreleased\\]\n/m", "$0\n". $section);
+	}
+
+	private static function updateScript($version) {
+		self::replaceOnce(self::SCRIPT, '/^VERSION = "[^"]*"$/m', 'VERSION = "'. $version .'"');
+	}
+
+	private static function replaceOnce($file, $pattern, $replacement) {
+		$content = str_replace("\r\n", "\n", file_get_contents($file));
+		$new = preg_replace($pattern, $replacement, $content, 1, $count);
+		if ($count !== 1) {
+			self::fail('Pattern '. $pattern .' not found in '. $file);
+		}
+		file_put_contents($file, $new);
+	}
+
+	private static function git($args) {
+		exec('git -C '. escapeshellarg(__DIR__) .' '. $args, $output, $code);
+		if ($code !== 0) {
+			self::fail('git '. $args .' failed');
+		}
+		return $output;
+	}
+
+	private static function fail($message) {
+		fwrite(STDERR, $message . PHP_EOL);
+		sleep(5);
+		exit(1);
+	}
+
+}
+
+Release::run();
