@@ -31,28 +31,31 @@ Without `sudo`, use `~/.local/bin/mcrsync` instead. If that folder isn't on your
 ### Update
 
 ```bash
-mcrsync selfupdate             # installed as a command (prefix sudo if installed in /usr/local/bin)
-python3 mcrsync.py selfupdate  # not installed
-mcrsync --version              # show the installed version
+# If installed as a command (prefix sudo if installed in /usr/local/bin)
+mcrsync selfupdate
+
+# If not installed
+python3 mcrsync.py selfupdate
+
+# Show the installed version
+mcrsync --version
 ```
 
 ## Usage
 
-Pick a file or folder in the left pane, go to the destination in the right pane, press `C` to queue it, then `F8` and `Enter` to run. Press `H` for help. See [Example Workflow](#example-workflow) for more.
+Pick a file or folder in the left pane, go to the destination in the right pane (switch with `Tab`), press `C` to queue it, then `F8` and `Enter` to run. Press `H` for help. See [Example Workflow](#example-workflow) for more.
 
 ## Features
 
-* **Legacy Friendly:** Targets Python 3.4+. Purposely avoids newer features (like f-strings or `os.scandir`) targetting older environments.
 * **Dual-Pane Navigation:** Browse your source and target directories side-by-side. 
 * **Remote over SSH:** Either pane can be switched to a remote host (press `O`), to push to or pull from another NAS or Linux server. Log in with a key file or a password; the password is asked by `ssh` itself and never stored. A dropped connection pauses the run until you log in again. Host names and IPv4 addresses are supported (not IPv6).
 * **Cloud storage via rclone:** A pane can also show a remote from your own `rclone config` (S3, Backblaze B2, Google Drive, OneDrive, WebDAV, ...). Items to or from it are copied with `rclone` instead of `rsync`, with the same queue, progress, conflict detection and Verify view. Cloud-to-cloud works too. See [rclone panes](#rclone-panes).
-* **Safe by Design ("Kid Gloves"):** Built to prevent catastrophic mistakes. You can create directories, but the tool intentionally lacks the ability to delete or remove files and folders. Furthermore, it strictly monitors file modification times to prevent overwriting newer files in the target directory.
+* **Resumable Queues:** Save your entire queue and custom flags to a JSON file. You can pause, quit, reload, and resume right where you left off. Remote hosts are saved with the queue (never passwords).
 * **Background Sizing:** Each item's total size and number of files (SIZE and FILES columns in the queue view) are calculated in the background as you build your queue.
 * **Live Progress:** While a run is going, a progress line shows the running item's phase, how much of it has been reviewed, what was actually copied, speed, conflicts, elapsed time and the current file. The status bar shows whole-queue progress and ETA. A run log (`G`) lists every copied file, conflict, error and connection event.
-* **Resumable Queues:** Save your entire queue and custom flags to a JSON file. You can pause, quit, reload, and resume right where you left off. Remote hosts are saved with the queue (never passwords).
-* **Safe Dry Runs:** Tick `-n, --dry-run` on the `F8` screen to see what would be copied and which files would conflict, without touching anything.
 * **Conflict Verification:** A dedicated "Verify" view lets you review skipped files, renamed items, and errors after a run, allowing you to manually resolve conflicts (Skip, Rename existing, or Auto-rename incoming). Resolutions never overwrite an existing file.
-* **Any file name:** Names with spaces, quotes, newlines, non-ASCII characters or a leading `-` or `.` work locally and remotely.
+* **Safe Dry Runs:** Tick `-n, --dry-run` on the `F8` screen to see what would be copied and which files would conflict, without touching anything.
+* **Legacy Friendly:** Targets Python 3.4+. Purposely avoids newer features (like f-strings or `os.scandir`) targetting older environments.
 
 See [Safety](#safety) for the full list of safeguards.
 
@@ -128,20 +131,6 @@ Values must be attached with `=` (`--exclude='*.tmp'`, not `--exclude '*.tmp'`),
 
 ---
 
-## rclone panes
-
-Press `O` and choose *rclone remote* to show a remote from your own `rclone config` in a pane. Every queue item with an rclone remote on either side is copied with rclone; all others still use rsync.
-
-* **Which panes:** an rclone pane can face a local pane or another rclone pane, but not an SSH pane.
-* **Copying:** folders are copied with `rclone copy`, single files with `rclone copyto`. Neither deletes anything on the target. The default flags are `--update --links`; `--update` is the same safety net as rsync's `-u`. Flags that change rclone's log or progress output (`-v`, `-P`, `--log-file`, ...) can't be used, since mcrsync reads that output itself. Backend flags such as `--s3-endpoint` are marked *CHECK*, as they can change where your data goes.
-* **Credentials:** mcrsync only uses remote names and never sees what's behind them. An encrypted rclone config only works if `RCLONE_PASSWORD_COMMAND` or `RCLONE_CONFIG_PASS` is set when mcrsync starts. Remote names must consist of letters, digits, `_` and `-`.
-* **Modification times:** some remotes (some WebDAV and FTP servers) can't store them, so "newer on the target" isn't reliable there. You're warned when connecting and on the F8 screen.
-* **Symlinks:** with `--links` a symlink is uploaded as a `name.rclonelink` file. Copies *into* a local folder never use `--links`, so those stay plain files there and can't point outside the target. Without `--links`, symlinks are skipped and listed in Verify → ERRORS.
-* **Bucket storage** (S3, B2, ...) has no empty folders: a folder you create with `Insert` only stays visible for the session, until a file is copied into it. Renames there are a copy plus a delete, so an interrupted rename can leave both names (never neither).
-* **Errors:** if rclone gives up with a temporary error, a login problem, a transfer limit, or the remote can't be reached, the run pauses as for a lost SSH connection. Fix the cause and press `P`.
-
----
-
 ## Keyboard Shortcuts
 
 ### Global Keys (Available in all views)
@@ -195,6 +184,30 @@ While monitoring your queue, items will display one of the following statuses:
 * **INCOMPLETE:** The copy ran, but some files were skipped because the target copy was newer than the source. Check the Verify (`V`) view to manually resolve.
 * **DRY RUN OK:** A dry run (`-n`) found nothing wrong. Nothing was copied, so a real run still processes the item.
 * **DRY RUN INCOMPLETE:** A dry run found files that are newer in the target. They can only be resolved after a real run.
+
+---
+
+## Files
+
+* **`~/.mcrsync.yaml`:** your SSH and rclone connection entries (never passwords). Each user has their own, readable only by them. Installed in `/usr/local/bin`, mcrsync can be run by every user, including root.
+* **Queue files:** saved wherever you choose with `S`. The default `queue.json` ends up in the folder you started mcrsync from.
+* **Temporary files** (SSH connection sockets, size calculations) are put in the system temp folder and removed when mcrsync exits.
+
+Minor note: With `sudo mcrsync`, some systems keep your own `HOME`, so root writes your `~/.mcrsync.yaml` and can leave it owned by root. Use `sudo -H mcrsync` or `sudo -i` to avoid that.
+
+---
+
+## rclone panes
+
+Press `O` and choose *rclone remote* to show a remote from your own `rclone config` in a pane. Every queue item with an rclone remote on either side is copied with rclone; all others still use rsync.
+
+* **Which panes:** an rclone pane can face a local pane or another rclone pane, but not an SSH pane.
+* **Copying:** folders are copied with `rclone copy`, single files with `rclone copyto`. Neither deletes anything on the target. The default flags are `--update --links`; `--update` is the same safety net as rsync's `-u`. Flags that change rclone's log or progress output (`-v`, `-P`, `--log-file`, ...) can't be used, since mcrsync reads that output itself. Backend flags such as `--s3-endpoint` are marked *CHECK*, as they can change where your data goes.
+* **Credentials:** mcrsync only uses remote names and never sees what's behind them. An encrypted rclone config only works if `RCLONE_PASSWORD_COMMAND` or `RCLONE_CONFIG_PASS` is set when mcrsync starts. Remote names must consist of letters, digits, `_` and `-`.
+* **Modification times:** some remotes (some WebDAV and FTP servers) can't store them, so "newer on the target" isn't reliable there. You're warned when connecting and on the F8 screen.
+* **Symlinks:** with `--links` a symlink is uploaded as a `name.rclonelink` file. Copies *into* a local folder never use `--links`, so those stay plain files there and can't point outside the target. Without `--links`, symlinks are skipped and listed in Verify → ERRORS.
+* **Bucket storage** (S3, B2, ...) has no empty folders: a folder you create with `Insert` only stays visible for the session, until a file is copied into it. Renames there are a copy plus a delete, so an interrupted rename can leave both names (never neither).
+* **Errors:** if rclone gives up with a temporary error, a login problem, a transfer limit, or the remote can't be reached, the run pauses as for a lost SSH connection. Fix the cause and press `P`.
 
 ---
 
