@@ -5153,6 +5153,86 @@ class App(object):
 
 
 # ----------------------------------------------------------------------
+# Self-update
+# ----------------------------------------------------------------------
+
+UPDATE_URL = "https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py"
+
+
+class SelfUpdater(object):
+    """`mcrsync selfupdate`: replaces the running script file (symlinks
+    followed) with the latest version, keeping its permissions."""
+
+    def __init__(self, url=None, path=None):
+        self.url = url or os.environ.get("MCRSYNC_UPDATE_URL") or UPDATE_URL
+        self.path = os.path.realpath(path or __file__)
+
+    def download(self):
+        try:
+            import urllib.request
+            resp = urllib.request.urlopen(self.url, timeout=60)
+            try:
+                return resp.read()
+            finally:
+                resp.close()
+        except Exception:
+            # Old Pythons (e.g. on a NAS) often lack current CA certificates.
+            if not shutil.which("curl"):
+                raise
+        p = subprocess.Popen(["curl", "-fsSL", self.url],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        if p.returncode != 0:
+            raise RuntimeError(err.decode("utf-8", "replace").strip()
+                               or "curl exited with {0}".format(p.returncode))
+        return out
+
+    def check(self, data):
+        if not data.startswith(b"#!") or b"mcrsync" not in data[:1000]:
+            raise RuntimeError("the download is not an mcrsync script")
+        try:
+            compile(data, self.url, "exec")
+        except SyntaxError as e:
+            raise RuntimeError("the download is not valid Python: {0}".format(e))
+
+    def replace(self, data):
+        fd, tmp = tempfile.mkstemp(prefix=".mcrsync-update-",
+                                   dir=os.path.dirname(self.path))
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            shutil.copymode(self.path, tmp)
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def run(self):
+        try:
+            print("Downloading {0}".format(self.url))
+            data = self.download()
+            self.check(data)
+            with open(self.path, "rb") as f:
+                if f.read() == data:
+                    print("Already up to date.")
+                    return 0
+            self.replace(data)
+        except PermissionError:
+            print("No permission to replace {0}. Try again with sudo.".format(self.path))
+            return 1
+        except Exception as e:
+            print("Update failed, nothing was changed: {0}".format(e))
+            return 1
+        print("Updated {0}".format(self.path))
+        return 0
+
+
+# ----------------------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------------------
 
@@ -5174,6 +5254,8 @@ def main(stdscr):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["selfupdate"]:
+        sys.exit(SelfUpdater().run())
     # With keypad mode, curses waits ESCDELAY ms (default 1000) to tell a
     # lone Esc from an arrow key's escape sequence.
     os.environ.setdefault("ESCDELAY", "25")

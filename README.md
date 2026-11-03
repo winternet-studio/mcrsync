@@ -6,7 +6,9 @@ A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude
 
 ![mcrsync with source and target panes and a queue](screenshots/nav.svg)
 
-## Install and use
+## Install
+
+### Run without installing
 
 It's a single file. Download it and run it:
 
@@ -14,6 +16,26 @@ It's a single file. Download it and run it:
 curl -O https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py
 python3 mcrsync.py
 ```
+
+### Install as a command
+
+To run it as `mcrsync` from any folder, install it in a folder on your `PATH`:
+
+```bash
+sudo curl -o /usr/local/bin/mcrsync https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py
+sudo chmod +x /usr/local/bin/mcrsync
+```
+
+Without `sudo`, use `~/.local/bin/mcrsync` instead. If that folder isn't on your `PATH` yet, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` and open a new terminal.
+
+### Update
+
+```bash
+mcrsync selfupdate             # installed as a command (prefix sudo if installed in /usr/local/bin)
+python3 mcrsync.py selfupdate  # not installed
+```
+
+## Usage
 
 Pick a file or folder in the left pane, go to the destination in the right pane, press `C` to queue it, then `F8` and `Enter` to run. Press `H` for help. See [Example Workflow](#example-workflow) for more.
 
