@@ -2821,14 +2821,25 @@ def prompt_string(stdscr, prompt, default=""):
         curses.curs_set(0)
 
 
-def confirm(stdscr, prompt):
+def confirm(stdscr, prompt, attr=0):
+    """attr styles the prompt text; the Y and N keys are always bold."""
     h, w = stdscr.getmaxyx()
-    lines = textwrap.wrap(prompt + " (Y/N)", max(10, w - 4)) or [""]
+    suffix = "(Y/N)"
+    lines = textwrap.wrap(prompt + " " + suffix, max(10, w - 4)) or [""]
     lines = lines[:max(1, h - 3)]
     win = curses.newwin(len(lines) + 2, w, h - len(lines) - 2, 0)
     win.border()
     for i, line in enumerate(lines):
-        safe_addstr(win, 1 + i, 2, line)
+        # textwrap never splits the suffix, so it ends the last line
+        if i == len(lines) - 1 and line.endswith(suffix):
+            text = line[:-len(suffix)]
+            safe_addstr(win, 1 + i, 2, text, attr)
+            x = 2 + len(text)
+            for ch in suffix:
+                safe_addstr(win, 1 + i, x, ch, curses.A_BOLD if ch in "YN" else 0)
+                x += 1
+        else:
+            safe_addstr(win, 1 + i, 2, line, attr)
     win.noutrefresh()
     curses.doupdate()
     while True:
@@ -3664,6 +3675,8 @@ class App(object):
         curses.curs_set(0)
         curses.use_default_colors()
         self.inactive_frame_attr = curses.A_DIM
+        # many 8-color terminals show bold red as bright red
+        self.bright_red_attr = curses.color_pair(4) | curses.A_BOLD
         try:
             curses.start_color()
             # Bright variants when available; bold black would render as gray
@@ -3680,6 +3693,8 @@ class App(object):
             if bright:
                 curses.init_pair(9, curses.COLOR_BLACK + 8, -1)           # inactive pane frame
                 self.inactive_frame_attr = curses.color_pair(9)
+                curses.init_pair(10, curses.COLOR_RED + 8, -1)            # bright red
+                self.bright_red_attr = curses.color_pair(10)
         except curses.error:
             pass
 
@@ -4884,7 +4899,7 @@ class App(object):
 
     def handle_key(self, c):
         if c == ord('q'):
-            if confirm(self.stdscr, "Quit mcrsync?"):
+            if confirm(self.stdscr, "Quit mcrsync?", self.bright_red_attr):
                 return False
             return True
 
