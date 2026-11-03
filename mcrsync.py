@@ -58,6 +58,9 @@ import textwrap
 import queue as pyqueue
 from collections import OrderedDict
 
+# Semantic versioning. A release is made by pushing the tag "v" + VERSION.
+VERSION = "2.0.0"
+
 DEFAULT_RSYNC_OPTS = ["-a", "-u", "--stats", "--itemize-changes"]
 DEFAULT_RCLONE_OPTS = ["--update", "--links"]
 
@@ -3269,7 +3272,7 @@ VIEW_HELP = "help"
 VIEW_LOG = "log"
 
 HELP_TEXT = [
-    "mcrsync - Midnight-Commander-style rsync queue manager",
+    "mcrsync " + VERSION + " - Midnight-Commander-style rsync queue manager",
     "",
     "GLOBAL KEYS (work in every view)",
     "  ? or H  Show this help",
@@ -5156,12 +5159,16 @@ class App(object):
 # Self-update
 # ----------------------------------------------------------------------
 
-UPDATE_URL = "https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py"
+# The mcrsync.py asset of the latest GitHub release
+UPDATE_URL = "https://github.com/winternet-studio/mcrsync/releases/latest/download/mcrsync.py"
+
+VERSION_RE = re.compile(br'^VERSION = "(\d+)\.(\d+)\.(\d+)"$', re.M)
 
 
 class SelfUpdater(object):
     """`mcrsync selfupdate`: replaces the running script file (symlinks
-    followed) with the latest version, keeping its permissions."""
+    followed) with the latest release if that is newer, keeping its
+    permissions."""
 
     def __init__(self, url=None, path=None):
         self.url = url or os.environ.get("MCRSYNC_UPDATE_URL") or UPDATE_URL
@@ -5179,7 +5186,7 @@ class SelfUpdater(object):
             # Old Pythons (e.g. on a NAS) often lack current CA certificates.
             if not shutil.which("curl"):
                 raise
-        p = subprocess.Popen(["curl", "-fsSL", self.url],
+        p = subprocess.Popen(["curl", "-fsSL", self.url],  # -L: release URLs redirect
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate()
         if p.returncode != 0:
@@ -5188,12 +5195,15 @@ class SelfUpdater(object):
         return out
 
     def check(self, data):
-        if not data.startswith(b"#!") or b"mcrsync" not in data[:1000]:
+        """Version tuple of a downloaded script; raises if it isn't one."""
+        m = VERSION_RE.search(data)
+        if not data.startswith(b"#!") or b"mcrsync" not in data[:1000] or not m:
             raise RuntimeError("the download is not an mcrsync script")
         try:
             compile(data, self.url, "exec")
         except SyntaxError as e:
             raise RuntimeError("the download is not valid Python: {0}".format(e))
+        return tuple(int(n) for n in m.groups())
 
     def replace(self, data):
         fd, tmp = tempfile.mkstemp(prefix=".mcrsync-update-",
@@ -5216,11 +5226,13 @@ class SelfUpdater(object):
         try:
             print("Downloading {0}".format(self.url))
             data = self.download()
-            self.check(data)
-            with open(self.path, "rb") as f:
-                if f.read() == data:
-                    print("Already up to date.")
-                    return 0
+            latest = self.check(data)
+            current = tuple(int(n) for n in VERSION.split("."))
+            if latest <= current:
+                print("Already up to date ({0}).".format(VERSION))
+                return 0
+            latest = ".".join(str(n) for n in latest)
+            print("Updating {0} -> {1}".format(VERSION, latest))
             self.replace(data)
         except PermissionError:
             print("No permission to replace {0}. Try again with sudo.".format(self.path))
@@ -5256,6 +5268,9 @@ def main(stdscr):
 if __name__ == "__main__":
     if sys.argv[1:] == ["selfupdate"]:
         sys.exit(SelfUpdater().run())
+    if sys.argv[1:] in (["--version"], ["-V"]):
+        print("mcrsync " + VERSION)
+        sys.exit(0)
     # With keypad mode, curses waits ESCDELAY ms (default 1000) to tell a
     # lone Esc from an arrow key's escape sequence.
     os.environ.setdefault("ESCDELAY", "25")

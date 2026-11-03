@@ -13,7 +13,7 @@ A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude
 It's a single file. Download it and run it:
 
 ```bash
-curl -O https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py
+curl -LO https://github.com/winternet-studio/mcrsync/releases/latest/download/mcrsync.py
 python3 mcrsync.py
 ```
 
@@ -22,7 +22,7 @@ python3 mcrsync.py
 To run it as `mcrsync` from any folder, install it in a folder on your `PATH`:
 
 ```bash
-sudo curl -o /usr/local/bin/mcrsync https://raw.githubusercontent.com/winternet-studio/mcrsync/main/mcrsync.py
+sudo curl -Lo /usr/local/bin/mcrsync https://github.com/winternet-studio/mcrsync/releases/latest/download/mcrsync.py
 sudo chmod +x /usr/local/bin/mcrsync
 ```
 
@@ -33,6 +33,7 @@ Without `sudo`, use `~/.local/bin/mcrsync` instead. If that folder isn't on your
 ```bash
 mcrsync selfupdate             # installed as a command (prefix sudo if installed in /usr/local/bin)
 python3 mcrsync.py selfupdate  # not installed
+mcrsync --version              # show the installed version
 ```
 
 ## Usage
@@ -228,3 +229,16 @@ While monitoring your queue, items will display one of the following statuses:
 ## Testing
 
 `test/` contains a Docker rig with a Python 3.4 client, SSH test hosts and rclone storage servers, and an automated test suite covering the logic, every remote operation, the safeguards above, attacks that must fail, and the curses UI itself. See [test/README.md](test/README.md).
+
+---
+
+## Releasing
+
+Versions follow [semantic versioning](https://semver.org). To release, set `VERSION` in `mcrsync.py`, commit, then push a matching tag:
+
+```bash
+git tag v2.0.0
+git push origin v2.0.0
+```
+
+The [release workflow](.github/workflows/release.yml) then creates the GitHub release with `mcrsync.py` attached, which is what the install commands and `selfupdate` download.

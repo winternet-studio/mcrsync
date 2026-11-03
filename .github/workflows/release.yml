@@ -1,0 +1,30 @@
+# Pushing a tag like v2.0.0 creates a GitHub release with mcrsync.py attached,
+# which is what `mcrsync selfupdate` and the install instructions download.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches VERSION in mcrsync.py
+        run: |
+          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' mcrsync.py)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match VERSION = \"$version\" in mcrsync.py"
+            exit 1
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" mcrsync.py --title "$GITHUB_REF_NAME" --generate-notes
