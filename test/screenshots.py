@@ -447,6 +447,14 @@ class Scenes(object):
         t.keys("c")
         time.sleep(2)
         t.save("rclone", "mcrsync - rclone (S3) pane")
+        t.keys("F8")
+        t.wait_for("RUN OPTIONS")
+        for _ in range(12):        # down to the last row, --delete
+            t.keys("Down", delay=0.2)
+        t.keys("Space")
+        t.wait_for("rclone sync")
+        t.save("run-options-rclone", "mcrsync - rclone run options (F8)")
+        t.keys("Escape")
 
     def progress_and_log(self):
         t = self.tmux
@@ -463,7 +471,7 @@ class Scenes(object):
         t.keys("C-u")
         t.type("-a -u --stats --itemize-changes --bwlimit=1500")
         t.keys("Enter")
-        t.save("run-options", "mcrsync - run options (F8)")
+        t.save("run-options-rsync", "mcrsync - rsync run options (F8)")
         t.keys("Enter")
         t.wait_for("| copying |")
         t.keys("t")

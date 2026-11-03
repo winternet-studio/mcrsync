@@ -70,9 +70,10 @@ Connecting a pane (`O`) and copying to S3 with rclone:
 ![Connect a pane](screenshots/connect.svg)
 ![rclone pane](screenshots/rclone.svg)
 
-Run options (`F8`), live progress and the run log (`G`):
+Run options (`F8`) for rsync and rclone, live progress and the run log (`G`):
 
-![Run options](screenshots/run-options.svg)
+![rsync run options](screenshots/run-options-rsync.svg)
+![rclone run options](screenshots/run-options-rclone.svg)
 ![Live progress](screenshots/progress.svg)
 ![Run log](screenshots/run-log.svg)
 
@@ -202,7 +203,7 @@ Minor note: With `sudo mcrsync`, some systems keep your own `HOME`, so root writ
 Press `O` and choose *rclone remote* to show a remote from your own `rclone config` in a pane. Every queue item with an rclone remote on either side is copied with rclone; all others still use rsync.
 
 * **Which panes:** an rclone pane can face a local pane or another rclone pane, but not an SSH pane.
-* **Copying:** folders are copied with `rclone copy`, single files with `rclone copyto`. Neither deletes anything on the target. The default flags are `--update --links`; `--update` is the same safety net as rsync's `-u`. Flags that change rclone's log or progress output (`-v`, `-P`, `--log-file`, ...) can't be used, since mcrsync reads that output itself. Backend flags such as `--s3-endpoint` are marked *CHECK*, as they can change where your data goes.
+* **Copying:** folders are copied with `rclone copy`, single files with `rclone copyto`. Neither deletes anything on the target. Tick `--delete` to copy folders with `rclone sync` instead, which also deletes target files that aren't in the source. The default flags are `--update --links`; `--update` is the same safety net as rsync's `-u`. Flags that change rclone's log or progress output (`-v`, `-P`, `--log-file`, ...) can't be used, since mcrsync reads that output itself. Backend flags such as `--s3-endpoint` are marked *CHECK*, as they can change where your data goes.
 * **Credentials:** mcrsync only uses remote names and never sees what's behind them. An encrypted rclone config only works if `RCLONE_PASSWORD_COMMAND` or `RCLONE_CONFIG_PASS` is set when mcrsync starts. Remote names must consist of letters, digits, `_` and `-`.
 * **Modification times:** some remotes (some WebDAV and FTP servers) can't store them, so "newer on the target" isn't reliable there. You're warned when connecting and on the F8 screen.
 * **Symlinks:** with `--links` a symlink is uploaded as a `name.rclonelink` file. Copies *into* a local folder never use `--links`, so those stay plain files there and can't point outside the target. Without `--links`, symlinks are skipped and listed in Verify → ERRORS.
@@ -213,11 +214,12 @@ Press `O` and choose *rclone remote* to show a remote from your own `rclone conf
 
 ## Safety
 
-`mcrsync` never deletes anything itself, and is built so that it doesn't overwrite, move or create anything you didn't ask for, on either side.
+`mcrsync` never deletes anything on its own (only the `--delete` flags do, if you switch them on), and is built so that it doesn't overwrite, move or create anything you didn't ask for, on either side.
 
 **Copying**
 * With the default `-u`/`--update`, a target file that is newer than the source is never overwritten; it becomes a conflict for you to resolve. Without it you get a warning before the run.
 * Surprising copies are refused (`SYNC FAIL`) instead of run: a file whose target name is an existing folder, a folder whose target name is an existing file, and a folder copied into itself.
+* An rclone sync (`--delete`) into a local folder is refused if the target contains a symlink to a folder, since rclone could follow it and delete files outside the target. `--delete` together with `-L`/`--copy-links` is refused too.
 * A dry run (`-n`) creates nothing, not even target folders.
 * Nothing a remote or a remote host sends can make a copy write outside its target folder.
 

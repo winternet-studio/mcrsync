@@ -713,12 +713,16 @@ class RsyncFlags(FlagSet):
 
 
 class RcloneFlags(FlagSet):
-    """mcrsync always runs 'rclone copy'/'copyto', which never delete from
-    the target; the risky flags are those that overwrite, move or delete
-    anyway, weaken the --update check, or run commands."""
+    """mcrsync runs 'rclone copy'/'copyto', which never delete from the
+    target, unless SYNC_FLAG is set; the risky flags are those that
+    overwrite, move or delete anyway, weaken the --update check, or run
+    commands."""
 
     TOOL = TOOL_RCLONE
     DEFAULTS = DEFAULT_RCLONE_OPTS
+    # mcrsync's own flag, never passed to rclone: folder items run 'rclone
+    # sync' instead of 'copy'. Matches RISKY_PREFIXES.
+    SYNC_FLAG = "--delete"
     CHOICES = [
         ("u", "--update", "Skip files that are newer on the target (safety net)", False),
         ("n", "--dry-run", "Show what would happen, change nothing", False),
@@ -728,6 +732,7 @@ class RcloneFlags(FlagSet):
         (None, "--ignore-existing", "Never touch files that exist on the target", False),
         ("L", "--copy-links", "Follow symlinks, copy what they point to", True),
         ("I", "--ignore-times", "Copy every file again, overwriting the target", True),
+        (None, SYNC_FLAG, "Delete target files that aren't in the source (sync)", True),
     ]
     SAFE_SHORT = "unlcM"
     SAFE_LONG = (
@@ -757,6 +762,10 @@ class RcloneFlags(FlagSet):
     OUTPUT_SHORT = "vqPi"
 
     @classmethod
+    def is_sync(cls, opts):
+        return cls.has(opts, None, cls.SYNC_FLAG)
+
+    @classmethod
     def problems(cls, opts):
         problem = super(RcloneFlags, cls).problems(opts)
         if problem:
@@ -771,6 +780,11 @@ class RcloneFlags(FlagSet):
         if bad:
             return ("mcrsync sets rclone's logging and progress output itself - remove: " +
                     " ".join(shlex.quote(o) for o in bad))
+        follow = [o for o in opts if cls._parse(o)[0] == "--copy-links" or "L" in cls._parse(o)[1]]
+        if follow and cls.is_sync(opts):
+            return ("--delete can't be combined with -L/--copy-links: rclone would follow "
+                    "symlinks in the target and delete files outside it - remove: " +
+                    " ".join(shlex.quote(o) for o in follow))
         return ""
 
 
@@ -1856,6 +1870,13 @@ class Progress(object):
         self.current = name
         self._seen_file()
 
+    def feed_deleted(self, name):
+        """A file or folder deleted from the target (or that a dry run
+        would delete)."""
+        self.phase = Progress.DELETING
+        self.deleted += 1
+        self.current = name
+
     def feed_rclone_stats(self, stats):
         """Apply the stats object of rclone's JSON log (every second)."""
         try:
@@ -1893,9 +1914,7 @@ class Progress(object):
         ('<', '>', 'c', 'h', '.' = unchanged, '*' = deleting), ftype the
         second ('f' = regular file, 'd', 'L', ...)."""
         if kind == "*":
-            self.phase = Progress.DELETING
-            self.deleted += 1
-            self.current = name
+            self.feed_deleted(name)
             return
         if ftype == "f":
             if kind in "<>":
@@ -2379,7 +2398,8 @@ class RsyncRunner(Runner):
 class RcloneRunner(Runner):
     """Runs 'rclone copy' (folders) or 'copyto' (files) for items with an
     rclone remote on at least one side and a local folder or another
-    rclone remote on the other. Neither command deletes from the target.
+    rclone remote on the other. Neither command deletes from the target;
+    with RcloneFlags.SYNC_FLAG folders run 'rclone sync', which does.
 
     Everything is read from rclone's JSON log at DEBUG level: an entry for
     every file checked (copied, skipped because the target is newer, or
@@ -2392,6 +2412,10 @@ class RcloneRunner(Runner):
     NEWER_MSG = "Destination is newer than source, skipping"
     COPIED_PREFIX = "Copied ("
     DRY_RUN_PREFIX = "Skipped copy as --dry-run is set"
+    DELETED_MSG = "Deleted"
+    DRY_DELETE_PREFIX = "Skipped delete as --dry-run is set"
+    RMDIR_MSG = "Removing directory"
+    DRY_RMDIR_PREFIX = "Skipped remove directory as --dry-run is set"
     SYMLINK_PREFIX = "Can't follow symlink"
 
     @staticmethod
@@ -2399,7 +2423,9 @@ class RcloneRunner(Runner):
         """(kind, name, value) for one line of rclone's output, or None.
         kind: "stats" (value = stats dict), "copied" (value = True if it
         replaced a file), "would_copy" (value = size), "newer",
-        "unchanged", "symlink", "error" / "notice" (value = text)."""
+        "unchanged", "deleted" (deleted or, in a dry run, would be; value
+        = True for a folder), "symlink", "error" / "notice" (value =
+        text)."""
         line = line.strip()
         if not line:
             return None
@@ -2422,6 +2448,9 @@ class RcloneRunner(Runner):
         name = obj if isinstance(obj, str) else ""
         if name and msg.startswith(RcloneRunner.SYMLINK_PREFIX):
             return ("symlink", name, msg)
+        if name and (msg == RcloneRunner.RMDIR_MSG or
+                     msg.startswith(RcloneRunner.DRY_RMDIR_PREFIX)):
+            return ("deleted", name, True)
         if name and str(entry.get("objectType", "")).endswith("Object"):
             if msg == RcloneRunner.NEWER_MSG:
                 return ("newer", name, None)
@@ -2430,6 +2459,8 @@ class RcloneRunner(Runner):
             if msg.startswith(RcloneRunner.DRY_RUN_PREFIX):
                 size = entry.get("size")
                 return ("would_copy", name, size if isinstance(size, int) else 0)
+            if msg == RcloneRunner.DELETED_MSG or msg.startswith(RcloneRunner.DRY_DELETE_PREFIX):
+                return ("deleted", name, False)
             if level == "debug" and msg.endswith("skipping"):
                 return ("unchanged", name, None)
         if level in ("error", "critical", "warning", "notice"):
@@ -2446,6 +2477,9 @@ class RcloneRunner(Runner):
                                            Progress.short_size(size))
         if kind == "would_copy":
             return "would be copied: {0} ({1})".format(name, Progress.short_size(value))
+        if kind == "deleted":
+            return "{0}DELETED: {1}{2}".format("would be " if dry_run else "", name,
+                                               "/" if value else "")
         if kind == "newer":
             return "CONFLICT (target newer, not copied): {0}".format(name)
         if kind == "symlink":
@@ -2462,13 +2496,14 @@ class RcloneRunner(Runner):
 
     @staticmethod
     def effective_opts(opts, dst_fs):
-        """--links turns .rclonelink files back into symlinks when writing
-        to a local folder, and rclone then writes later files THROUGH such
-        a symlink - so a remote could place files anywhere. It is only used
-        for uploads."""
+        """The flags rclone gets: without SYNC_FLAG (see command()), and
+        without --links for local targets: it turns .rclonelink files back
+        into symlinks there, and rclone then writes later files THROUGH
+        such a symlink - so a remote could place files anywhere."""
+        opts = RcloneFlags.without(opts, None, RcloneFlags.SYNC_FLAG)
         if Runner.local_path(dst_fs, "/") is not None:
             return RcloneFlags.without(opts, "l", "--links")
-        return list(opts)
+        return opts
 
     def item_args(self, item, opts, src_fs, dst_fs):
         # '--': a path can never be taken as an option
@@ -2476,12 +2511,16 @@ class RcloneRunner(Runner):
             "--", RcloneRunner.side_arg(src_fs, item.src), RcloneRunner.side_arg(dst_fs, item.dst)]
 
     @staticmethod
-    def command(item):
-        # copy: the folder's contents into item.dst; copyto: the file AS item.dst
-        return "copy" if item.is_dir else "copyto"
+    def command(item, opts):
+        # copy: the folder's contents into item.dst; sync: the same, then
+        # deletes what isn't in the source; copyto: the file AS item.dst
+        if not item.is_dir:
+            return "copyto"
+        return "sync" if RcloneFlags.is_sync(opts) else "copy"
 
     def item_cmd(self, item, opts, src_fs, dst_fs):
-        return RcloneCli.cmd(RcloneRunner.command(item), self.item_args(item, opts, src_fs, dst_fs))
+        return RcloneCli.cmd(RcloneRunner.command(item, opts),
+                             self.item_args(item, opts, src_fs, dst_fs))
 
     def list_source(self, item, src_fs, opts):
         """((relpath -> size of each file, set of folder relpaths), "") of a
@@ -2543,6 +2582,23 @@ class RcloneRunner(Runner):
                 return rel
         return ""
 
+    @staticmethod
+    def linked_folder_in_target(item, dst_fs, opts):
+        """For sync into local storage: a symlink to a folder anywhere in
+        the target. If rclone follows it (-L, or copy_links set in its
+        environment or config, which no flag reliably overrides), sync
+        deletes what it points to. Returns its relative path, or ""."""
+        root = Runner.local_path(dst_fs, item.dst)
+        if root is None or RcloneRunner.command(item, opts) != "sync":
+            return ""
+        # links to folders show up in dirnames, and aren't followed
+        for dirpath, dirnames, filenames in os.walk(root):
+            for name in sorted(dirnames):
+                full = os.path.join(dirpath, name)
+                if os.path.islink(full):
+                    return os.path.relpath(full, root)
+        return ""
+
     def _pause(self, item, rc, errors, log_cb):
         """For exit codes worth retrying later: the item goes back to NOT
         SYNCED and its rclone remotes count as not connected, which pauses
@@ -2596,6 +2652,12 @@ class RcloneRunner(Runner):
         except FsError as e:
             self._fail(item, "could not check the target: {0}".format(e))
             return True
+        link = RcloneRunner.linked_folder_in_target(item, dst_fs, opts)
+        if link:
+            self._fail(item, "not synced: the target has a symlink to a folder, '{0}' - if rclone "
+                             "followed it, --delete would delete files outside the target. Use "
+                             "it without --delete, or remove the link".format(link))
+            return True
 
         progress = item.progress
         progress.phase = Progress.SCANNING
@@ -2626,7 +2688,7 @@ class RcloneRunner(Runner):
 
         transfer_start = time.time()
         try:
-            proc = RcloneCli.spawn(RcloneRunner.command(item), args, subprocess.PIPE,
+            proc = RcloneCli.spawn(RcloneRunner.command(item, opts), args, subprocess.PIPE,
                                    subprocess.STDOUT)
         except FsError as e:
             self._fail(item, str(e))
@@ -2655,6 +2717,8 @@ class RcloneRunner(Runner):
                 progress.feed_conflict(size_of(name))
             elif kind == "unchanged":
                 progress.feed_unchanged(size_of(name))
+            elif kind == "deleted":
+                progress.feed_deleted(name + ("/" if value else ""))
             elif kind == "symlink":
                 full = src_fs.pathmod.join(item.src, name) if item.is_dir else item.src
                 item.errors_list.append((item.src_display(full), item.dst_display(),
@@ -3410,7 +3474,9 @@ HELP_TEXT = [
     "  starts - mcrsync never asks for that password.",
     "",
     "  Folders are copied with 'rclone copy', single files with 'rclone",
-    "  copyto'; neither deletes anything on the target. With the default",
+    "  copyto'; neither deletes anything on the target. Ticking --delete",
+    "  on the F8 screen makes folders use 'rclone sync', which also",
+    "  deletes target files that aren't in the source. With the default",
     "  --update, newer target files become conflicts, as with rsync.",
     "  Remotes that can't store modification times (some WebDAV/FTP",
     "  servers) compare with upload times instead - you are warned about",
@@ -3422,7 +3488,9 @@ HELP_TEXT = [
     "  .rclonelink files stay plain files there - a link planted on the",
     "  remote can't make later files land outside the target. For the same",
     "  reason an item is refused if its local target has a symlink where",
-    "  the source has a folder.",
+    "  the source has a folder. A sync (--delete) into a local folder is",
+    "  refused if the target has any symlink to a folder: rclone could",
+    "  follow it and delete files outside the target.",
     "  Permissions and owners are only kept with -M/--metadata, and only",
     "  where the backend supports it.",
     "",
@@ -3534,8 +3602,8 @@ HELP_TEXT = [
     "                this can take minutes before anything is copied",
     "    copying     Files are being checked and transferred; 'now:' is",
     "                the file being copied",
-    "    deleting    (red) only with --delete... flags: rsync is removing",
-    "                files from the target",
+    "    deleting    (red) only with --delete... flags: rsync or rclone",
+    "                is removing files from the target",
     "    finishing   All files checked; rsync sets folder times and",
     "                writes its statistics",
     "  A dry run shows 'DRY RUN' and 'would copy'.",
@@ -4693,6 +4761,11 @@ class App(object):
                 warnings.append(("Note: -l/--links is left out for copies INTO a local folder - "
                                  "symlinks from a remote stay .rclonelink files there, so they "
                                  "can't point outside the target.", 0))
+            if tool == TOOL_RCLONE and flags.is_sync(opts):
+                warnings.append(("", 0))
+                warnings.append(("Note: --delete makes folder items run 'rclone sync' instead of "
+                                 "'rclone copy'; single files are still copied with "
+                                 "'rclone copyto'.", 0))
             if flags.is_dry_run(opts):
                 warnings.append(("DRY RUN (-n): nothing will be copied or created by {0}. Items "
                                  "end up as DRY RUN OK / DRY RUN INCOMPLETE.".format(tool),

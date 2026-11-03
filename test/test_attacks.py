@@ -338,6 +338,43 @@ class SymlinkEscapeBase(unittest.TestCase):
         it = self.run_pull(None, dst)
         self.assertEqual(it.status, m.STATUS_OK, it.error_text)
 
+    def test_sync_never_deletes_through_target_symlink(self):
+        """'rclone sync' following links would delete what an unrelated
+        symlink in the target points to."""
+        precious = os.path.join(self.outside, "precious")
+        write(precious, "keep")
+        dst = os.path.join(self.tmp, "synced")
+        os.makedirs(dst)
+        os.symlink(self.outside, os.path.join(dst, "elsewhere"))
+        it = m.QueueItem(self.remote_src, dst, True, self.spec, None)
+        for opts in (["-uL", "--delete"], ["--update", "--copy-links=true", "--delete"]):
+            self.runner.run_item(it, lambda s: None, opts)
+            self.assertEqual(it.status, m.STATUS_FAIL, opts)
+            self.assertIn("-L/--copy-links", it.error_text)
+        # what a local remote's 'copy_links = true' in rclone.conf does too;
+        # rclone 1.68 follows links then even with --copy-links=false
+        env = ("RCLONE_COPY_LINKS", "RCLONE_LOCAL_COPY_LINKS")
+        loc = m.RcloneSpec("loc")
+        self.registry.open_rclone(loc)
+        deep = os.path.join(self.tmp, "deep")
+        os.makedirs(os.path.join(deep, "a"))
+        os.symlink(self.outside, os.path.join(deep, "a", "b"))
+        for name in env:
+            os.environ[name] = "true"
+        try:
+            for target, spec, link in ((dst, None, "elsewhere"), (deep, loc, "a/b")):
+                it = m.QueueItem(self.remote_src, target, True, self.spec, spec)
+                self.runner.run_item(it, lambda s: None, m.DEFAULT_RCLONE_OPTS + ["--delete"])
+                self.assertEqual(it.status, m.STATUS_FAIL)
+                self.assertIn("symlink to a folder, '{0}'".format(link), it.error_text)
+            # without --delete it is a plain copy, as before
+            self.runner.run_item(it, lambda s: None, ["--update"])
+            self.assertEqual(it.status, m.STATUS_OK, it.error_text)
+        finally:
+            for name in env:
+                del os.environ[name]
+        self.assertEqual(read(precious), "keep")
+
 
 @unittest.skipUnless("s3" in SERVICES, "needs the rclone-s3 service of the Docker rig")
 class SymlinkEscapeS3Test(SymlinkEscapeBase):

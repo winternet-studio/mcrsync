@@ -5,14 +5,12 @@
 <circle cx="20" cy="15" r="6" fill="#ff5f57"/>
 <circle cx="40" cy="15" r="6" fill="#febc2e"/>
 <circle cx="60" cy="15" r="6" fill="#28c840"/>
-<text x="518.0" y="19" fill="#a0a0a0" font-family="sans-serif" font-size="13" text-anchor="middle">mcrsync - run options (F8)</text>
+<text x="518.0" y="19" fill="#a0a0a0" font-family="sans-serif" font-size="13" text-anchor="middle">mcrsync - rclone run options (F8)</text>
 <g transform="translate(14,44)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="14">
-<rect x="16.8" y="54" width="630.0" height="18" fill="#d0d0d0"/>
-<rect x="33.6" y="324" width="932.4" height="18" fill="#d0d0d0"/>
-<rect x="33.6" y="342" width="924.0" height="18" fill="#d0d0d0"/>
-<rect x="33.6" y="360" width="806.4" height="18" fill="#d0d0d0"/>
-<rect x="33.6" y="378" width="386.4" height="18" fill="#d0d0d0"/>
-<rect x="0.0" y="522" width="999.6" height="18" fill="#4f7fd0"/>
+<rect x="16.8" y="198" width="663.6" height="18" fill="#cc4b4b"/>
+<rect x="33.6" y="270" width="806.4" height="18" fill="#d0d0d0"/>
+<rect x="33.6" y="288" width="394.8" height="18" fill="#d0d0d0"/>
+<rect x="0.0" y="522" width="865.2" height="18" fill="#4f7fd0"/>
 <path d="M4.2 9.0V18.0M4.2 9.0H8.4" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M8.4 9.0H16.8" stroke="#d0d0d0" stroke-width="1.2"/>
 <text x="16.8" y="13.5" textLength="453.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold"> RUN OPTIONS - apply to ALL queued items of each tool </text>
@@ -83,67 +81,67 @@
 <path d="M4.2 18.0V36.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M1003.8 18.0V36.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="16.8" y="49.5" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" text-decoration="underline">rsync flags (3 items):</text>
+<text x="16.8" y="49.5" textLength="184.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" text-decoration="underline">rclone flags (1 item):</text>
 <path d="M1003.8 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="16.8" y="67.5" textLength="630.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">&gt; [x] -a, --archive        Archive mode (recurse, perms, times, links, ...)</text>
+<text x="8.4" y="67.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] -u, --update         Skip files that are newer on the target (safety net)                                      </text>
 <path d="M1003.8 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="85.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] -u, --update         Skip files that are newer on the target (safety net)                                      </text>
+<text x="8.4" y="85.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -n, --dry-run        Show what would happen, change nothing                                                    </text>
 <path d="M1003.8 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="103.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -n, --dry-run        Show what would happen, change nothing                                                    </text>
+<text x="8.4" y="103.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] -l, --links          Upload symlinks as .rclonelink files (restorable)                                         </text>
 <path d="M1003.8 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 108.0V126.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="121.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -z, --compress       Compress data during transfer                                                             </text>
+<text x="8.4" y="121.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -c, --checksum       Compare by checksum, not size + time (slow)                                               </text>
 <path d="M1003.8 108.0V126.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 126.0V144.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="139.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -c, --checksum       Compare by checksum, not size + time (slow)                                               </text>
+<text x="8.4" y="139.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -M, --metadata       Keep permissions/owners (only some backends)                                              </text>
 <path d="M1003.8 126.0V144.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 144.0V162.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="157.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -H, --hard-links     Preserve hard links                                                                       </text>
+<text x="8.4" y="157.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] --ignore-existing    Never touch files that exist on the target                                                </text>
 <path d="M1003.8 144.0V162.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 162.0V180.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="175.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -A, --acls           Preserve ACLs                                                                             </text>
+<text x="16.8" y="175.5" textLength="562.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#cc4b4b" font-weight="bold">  [ ] -L, --copy-links     Follow symlinks, copy what they point to</text>
 <path d="M1003.8 162.0V180.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 180.0V198.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="193.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] -X, --xattrs         Preserve extended attributes                                                              </text>
+<text x="16.8" y="193.5" textLength="604.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#cc4b4b" font-weight="bold">  [ ] -I, --ignore-times   Copy every file again, overwriting the target</text>
 <path d="M1003.8 180.0V198.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 198.0V216.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="211.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [ ] --partial            Keep partially copied files (resume big files)                                            </text>
+<text x="16.8" y="211.5" textLength="663.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21" font-weight="bold">&gt; [x] --delete             Delete target files that aren&#x27;t in the source (sync)</text>
 <path d="M1003.8 198.0V216.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 216.0V234.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="229.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] --stats              Transfer statistics (fills the Verify view)                                               </text>
 <path d="M1003.8 216.0V234.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 234.0V252.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="247.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   [x] --itemize-changes    Per-file change list                                                                      </text>
+<text x="8.4" y="247.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0"> rclone - Other flags: (none)                                                                                         </text>
 <path d="M1003.8 234.0V252.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 252.0V270.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="16.8" y="265.5" textLength="604.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#cc4b4b" font-weight="bold">  [ ] --delete             Delete target files that aren&#x27;t in the source</text>
+<text x="16.8" y="265.5" textLength="554.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold">Command for item #1 of 1 (other rclone items get their own paths):</text>
 <path d="M1003.8 252.0V270.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 270.0V288.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="33.6" y="283.5" textLength="806.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">rclone sync --ask-password=false --update --links --use-json-log --log-level DEBUG --stats 1s --</text>
 <path d="M1003.8 270.0V288.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 288.0V306.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="8.4" y="301.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0"> rsync - Other flags: --bwlimit=1500                                                                                  </text>
+<text x="33.6" y="301.5" textLength="394.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/volume1/photos/2024 cloud:/archive/photos/2024</text>
 <path d="M1003.8 288.0V306.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 306.0V324.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="16.8" y="319.5" textLength="546.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" font-weight="bold">Command for item #1 of 3 (other rsync items get their own paths):</text>
+<text x="16.8" y="319.5" textLength="907.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#cc4b4b" font-weight="bold">CAUTION: these rclone flags can delete or overwrite data, write outside the target or run commands: --delete</text>
 <path d="M1003.8 306.0V324.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 324.0V342.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="33.6" y="337.5" textLength="932.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">rsync -a -u --stats --itemize-changes --bwlimit=1500 --info=skip1,progress2,name2 &#x27;--out-format=%i %l %n&#x27; -s -e</text>
 <path d="M1003.8 324.0V342.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 342.0V360.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="33.6" y="355.5" textLength="924.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">&#x27;ssh -p 2222 -o ControlPath=/tmp/mcrsync-k3kil3b7/0.sock -o ServerAliveInterval=30 -o ServerAliveCountMax=4 -i</text>
+<text x="8.4" y="355.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0"> Note: -l/--links is left out for copies INTO a local folder - symlinks from a remote stay .rclonelink files          </text>
 <path d="M1003.8 342.0V360.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 360.0V378.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="33.6" y="373.5" textLength="806.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/root/.ssh/id_test -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=15&#x27; -- /volume1/video/</text>
+<text x="8.4" y="373.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   there, so they can&#x27;t point outside the target.                                                                     </text>
 <path d="M1003.8 360.0V378.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 378.0V396.0" stroke="#d0d0d0" stroke-width="1.2"/>
-<text x="33.6" y="391.5" textLength="386.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">keyuser@backup-nas:/home/keyuser/backup/video/</text>
 <path d="M1003.8 378.0V396.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 396.0V414.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="409.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0"> Note: --delete makes folder items run &#x27;rclone sync&#x27; instead of &#x27;rclone copy&#x27;; single files are still copied with     </text>
 <path d="M1003.8 396.0V414.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 414.0V432.0" stroke="#d0d0d0" stroke-width="1.2"/>
+<text x="8.4" y="427.5" textLength="991.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0">   &#x27;rclone copyto&#x27;.                                                                                                   </text>
 <path d="M1003.8 414.0V432.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M4.2 432.0V450.0" stroke="#d0d0d0" stroke-width="1.2"/>
 <path d="M1003.8 432.0V450.0" stroke="#d0d0d0" stroke-width="1.2"/>
@@ -289,5 +287,5 @@
 <text x="714.0" y="535.5" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Esc</text>
 <text x="739.2" y="535.5" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:cancel  </text>
 <text x="814.8" y="535.5" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf" font-weight="bold">Q</text>
-<text x="823.2" y="535.5" textLength="176.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:quit                </text>
+<text x="823.2" y="535.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d3d7cf">:quit</text>
 </g></svg>

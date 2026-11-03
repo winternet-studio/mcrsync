@@ -174,6 +174,14 @@ class RcloneFlagsTest(unittest.TestCase):
         self.assertEqual(self.F.toggle(["--update"], links), ["--update", "-l"])
         self.assertEqual(self.F.others(["-ulM", "--exclude", "x"]), ["--exclude", "x"])
 
+    def test_sync_flag(self):
+        sync = [c for c in self.F.CHOICES if c[1] == "--delete"][0]
+        self.assertTrue(sync[3])
+        opts = self.F.toggle(OPTS, sync)
+        self.assertTrue(self.F.is_sync(opts))
+        self.assertEqual(self.F.risky(opts), ["--delete"])
+        self.assertFalse(self.F.is_sync(OPTS + ["--delete-after"]))
+
 
 class RcloneParseTest(unittest.TestCase):
     P = staticmethod(m.RcloneRunner.parse_line)
@@ -189,6 +197,13 @@ class RcloneParseTest(unittest.TestCase):
             (log_line("debug", "Destination mod time is within 1ns of source and files identical, "
                       "skipping", "same.txt"), ("unchanged", "same.txt", None)),
             (log_line("debug", "Unchanged skipping", "u"), ("unchanged", "u", None)),
+            (log_line("info", "Deleted", "old/x"), ("deleted", "old/x", False)),
+            (log_line("warning", "Skipped delete as --dry-run is set (size 2)", "z", size=2,
+                      skipped="delete"), ("deleted", "z", False)),
+            (log_line("info", "Removing directory", "old", object_type="string"),
+             ("deleted", "old", True)),
+            (log_line("warning", "Skipped remove directory as --dry-run is set", "old",
+                      object_type="string", skipped="remove directory"), ("deleted", "old", True)),
             (log_line("warning", "Can't follow symlink without -L/--copy-links", "ln",
                       object_type="string"),
              ("symlink", "ln", "Can't follow symlink without -L/--copy-links")),
@@ -232,6 +247,15 @@ class RcloneParseTest(unittest.TestCase):
         d = m.Progress(True, None, None)
         d.feed_listed(7, "x")
         self.assertEqual((d.copied_files, d.copied_bytes), (1, 7))
+        d.feed_deleted("old/")
+        d.feed_rclone_stats({"bytes": 0, "transfers": 0})
+        self.assertEqual((d.phase, d.deleted), (m.Progress.DELETING, 1))
+        self.assertIn("1 would be deleted", d.describe())
+
+    def test_deleted_log_text(self):
+        D = m.RcloneRunner.describe_event
+        self.assertEqual(D(("deleted", "x", False), False, 0), "DELETED: x")
+        self.assertEqual(D(("deleted", "d", True), True, 0), "would be DELETED: d/")
 
     def test_error_text(self):
         err = "\n".join([log_line("error", "first"), log_line("info", "x"),
@@ -437,6 +461,51 @@ class RcloneRemoteTest(RcloneBase):
         self.assertTrue(all(r[2].startswith("would copy") for r in it.copied_list))
         self.assertEqual(it.progress.copied_files, 3)
 
+    def test_sync_deletes_only_with_flag(self):
+        src = self.make_src()
+        dst = self.rpath("dst")
+        write(os.path.join(dst, "a.txt"), "newer", FUTURE)
+        write(os.path.join(dst, "extra.txt"), "x")
+        write(os.path.join(dst, "old", "y.txt"), "y")
+        it = m.QueueItem(src, dst, True, None, self.spec)
+        self.run_item(it)
+        self.assertEqual(it.progress.deleted, 0)
+        self.assertIn("old/y.txt", snapshot(dst))
+
+        sync = OPTS + ["--delete"]
+        cmd = self.runner.item_cmd(it, sync)
+        self.assertEqual(cmd[1], "sync")
+        self.assertNotIn("--delete", cmd)
+        log = []
+        self.run_item(it, sync + ["--dry-run"], log)
+        self.assertEqual(it.status, m.STATUS_DRY_INCOMPLETE, it.error_text)
+        self.assertIn("extra.txt", snapshot(dst))
+        self.assertEqual(it.progress.deleted, 3)
+        for line in ("would be DELETED: extra.txt", "would be DELETED: old/y.txt",
+                     "would be DELETED: old/"):
+            self.assertIn(line, log)
+
+        log = []
+        self.run_item(it, sync, log)
+        self.assertEqual(it.status, m.STATUS_INCOMPLETE, it.error_text)
+        # the newer target file is a conflict, not overwritten or deleted
+        self.assertEqual(snapshot(dst), {"a.txt": "newer", "c.txt": "c.txt", "sub": "<dir>",
+                                         "sub/b.txt": "sub/b.txt"})
+        self.assertEqual([c.relpath for c in it.conflicts], ["a.txt"])
+        self.assertEqual(it.progress.deleted, 3)
+        self.assertIn("DELETED: old/", log)
+
+    def test_sync_flag_on_single_file(self):
+        src = self.make_src()
+        write(os.path.join(self.base, "x", "other.txt"), "o")
+        it = m.QueueItem(os.path.join(src, "a.txt"), self.rpath("x", "a.txt"), False, None,
+                         self.spec)
+        self.assertEqual(self.runner.item_cmd(it, OPTS + ["--delete"])[1], "copyto")
+        self.run_item(it, OPTS + ["--delete"])
+        self.assertEqual(it.status, m.STATUS_OK, it.error_text)
+        self.assertEqual(snapshot(os.path.join(self.base, "x")),
+                         {"a.txt": "a.txt", "other.txt": "o"})
+
     def test_single_file_and_pull(self):
         src = self.make_src()
         it = m.QueueItem(os.path.join(src, "a.txt"), self.rpath("x", "a.txt"), False, None,
@@ -630,6 +699,17 @@ class RcloneS3Test(RcloneBase):
         self.assertEqual(self.fs.size(self.rpath("dst"), True, m.threading.Event()),
                          (len("a.txtsub/b.txtc.txtnewer"), 4))
 
+    def test_sync(self):
+        src = self.make_src()
+        self.put("dst/extra.txt", "x")
+        self.put("dst/old/y.txt", "y")
+        it = m.QueueItem(src, self.rpath("dst"), True, None, self.spec)
+        log = []
+        self.run_item(it, OPTS + ["--delete"], log)
+        self.assertEqual(it.status, m.STATUS_OK, it.error_text)
+        self.assertEqual(self.names("dst"), ["a.txt", "c.txt", "sub"])
+        self.assertIn("DELETED: old/y.txt", log)
+
     def test_symlinks_uploaded_as_rclonelink(self):
         src = self.make_src()
         os.symlink("a.txt", os.path.join(src, "link"))
@@ -781,6 +861,14 @@ class RcloneUiTest(unittest.TestCase):
         self.keys(" -v", literal=True)
         self.keys("Enter")
         self.wait_for("keeping previous options")
+        self.keys("Enter")
+        self.keys("e")
+        self.wait_for("rclone flags:")
+        self.keys(" --delete", literal=True)
+        self.keys("Enter")
+        s = self.wait_for("makes folder items run 'rclone sync'")
+        self.assertIn("rclone sync --ask-password=false --update", s)
+        self.assertIn("CAUTION", s)
 
     def test_malicious_queue_file(self):
         """Flags from a queue file that would send data elsewhere or run a
