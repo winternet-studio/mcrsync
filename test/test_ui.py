@@ -158,6 +158,7 @@ class UiTest(unittest.TestCase):
         self.keys("Tab")
         self.connect_with_password()
         self.keys("Tab")
+        self.keys("Down")
         self.keys("c")
         self.keys("F8")
         self.wait_for("RUN OPTIONS")
@@ -179,6 +180,7 @@ class UiTest(unittest.TestCase):
         self.keys("Tab")
         self.connect_with_password()
         self.keys("Tab")
+        self.keys("Down")
         self.keys("c")
         self.keys("F8")
         self.keys("e")
@@ -218,6 +220,7 @@ class UiTest(unittest.TestCase):
         self.wait_for("rsync can't copy between two remote hosts")
         self.keys("Enter")
         self.keys("Tab")
+        self.keys("Down")
         self.keys("c")
         # dry run
         self.keys("F8")
@@ -350,6 +353,7 @@ class UiTest(unittest.TestCase):
         self.keys("Right")
         self.wait_for("/tmp/ui/dst")
         self.keys("Tab")
+        self.keys("Down")
         self.keys("c")
         self.keys("F8")
         self.keys("e")
@@ -386,6 +390,7 @@ class UiTest(unittest.TestCase):
             f.write("x")
         self.start()
         # rename popup: arrows used to arrive as Esc and cancel it
+        self.keys("Down")
         self.keys("F2")
         self.wait_for("New name for file 'old.txt'")
         self.keys("Left")
@@ -447,8 +452,8 @@ class UiTest(unittest.TestCase):
             os.execvp("python3", ["python3", APP])
         try:
             time.sleep(1.5)
-            # F2 (xterm keypad mode: ESC O Q), Ctrl-U, type, Enter
-            for chunk in (b"\x1bOQ", b"\x15", "ünï 名前.txt".encode("utf-8"), b"\r"):
+            # Down past "..", F2 (xterm keypad mode: ESC O B, ESC O Q), Ctrl-U, type, Enter
+            for chunk in (b"\x1bOB", b"\x1bOQ", b"\x15", "ünï 名前.txt".encode("utf-8"), b"\r"):
                 os.write(fd, chunk)
                 time.sleep(0.5)
             end = time.time() + 5
@@ -478,6 +483,7 @@ class UiTest(unittest.TestCase):
         self.keys("Right")
         self.wait_for("/tmp/ui/dst")
         self.keys("Tab")
+        self.keys("Down")
         self.keys("c")
         self.keys("F8")
         self.keys("e")

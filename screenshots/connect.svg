@@ -8,8 +8,8 @@
 <text x="518.0" y="19" fill="#a0a0a0" font-family="sans-serif" font-size="13" text-anchor="middle">mcrsync - connect a pane (O)</text>
 <g transform="translate(14,44)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="14">
 <rect x="520.8" y="0" width="134.4" height="18" fill="#d3d7cf"/>
-<rect x="16.8" y="36" width="42.0" height="18" fill="#d7a83a"/>
-<rect x="520.8" y="36" width="42.0" height="18" fill="#d7a83a"/>
+<rect x="16.8" y="36" width="25.2" height="18" fill="#d7a83a"/>
+<rect x="520.8" y="36" width="25.2" height="18" fill="#d7a83a"/>
 <rect x="226.8" y="234" width="546.0" height="18" fill="#d0d0d0"/>
 <rect x="0.0" y="522" width="999.6" height="18" fill="#4f7fd0"/>
 <path d="M4.2 9.0V18.0M4.2 9.0H8.4" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
@@ -109,20 +109,22 @@
 <text x="520.8" y="31.5" textLength="126.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d0d0d0" fill-opacity="0.55">/volume1/photos</text>
 <path d="M1003.8 18.0V36.0" stroke="#d3d7cf" stroke-width="1.6"/>
 <path d="M4.2 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
-<text x="16.8" y="49.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/2023</text>
+<text x="16.8" y="49.5" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/..</text>
 <path d="M499.8 36.0V54.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
 <path d="M508.2 36.0V54.0" stroke="#d3d7cf" stroke-width="1.6"/>
-<text x="520.8" y="49.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/2023</text>
+<text x="520.8" y="49.5" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#1d1f21">/..</text>
 <path d="M1003.8 36.0V54.0" stroke="#d3d7cf" stroke-width="1.6"/>
 <path d="M4.2 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
-<text x="16.8" y="67.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2024</text>
+<text x="16.8" y="67.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2023</text>
 <path d="M499.8 54.0V72.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
 <path d="M508.2 54.0V72.0" stroke="#d3d7cf" stroke-width="1.6"/>
-<text x="520.8" y="67.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2024</text>
+<text x="520.8" y="67.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2023</text>
 <path d="M1003.8 54.0V72.0" stroke="#d3d7cf" stroke-width="1.6"/>
 <path d="M4.2 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
+<text x="16.8" y="85.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2024</text>
 <path d="M499.8 72.0V90.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
 <path d="M508.2 72.0V90.0" stroke="#d3d7cf" stroke-width="1.6"/>
+<text x="520.8" y="85.5" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve" fill="#d7a83a">/2024</text>
 <path d="M1003.8 72.0V90.0" stroke="#d3d7cf" stroke-width="1.6"/>
 <path d="M4.2 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>
 <path d="M499.8 90.0V108.0" stroke="#d0d0d0" stroke-width="1.2" stroke-opacity="0.55"/>

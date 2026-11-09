@@ -148,7 +148,7 @@ Values must be attached with `=` (`--exclude='*.tmp'`, not `--exclude '*.tmp'`),
 ### NAV View (File Browser)
 * `Tab`: Switch active pane between SOURCE (left) and TARGET (right).
 * `Left` / `Backspace`: Go to the parent directory.
-* `Right` / `Enter`: Enter the highlighted directory.
+* `Right` / `Enter`: Enter the highlighted directory (`..` goes to the parent).
 * `Home` / `End`: Jump to the first / last item.
 * `F5`: Refresh both panes (offers to log in again if a remote pane lost its connection).
 * `O`: Connect the active pane to a remote host via SSH or to an rclone remote, or disconnect it and return to the local folder.

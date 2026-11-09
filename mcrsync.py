@@ -3319,14 +3319,20 @@ def message(stdscr, text):
 # ----------------------------------------------------------------------
 
 class Pane:
+    # first row in every folder except the root; Enter on it goes up
+    PARENT = ("..", True)
+
     def __init__(self, path, fs, busy=NOT_BUSY):
         self.fs = fs
         self.busy = busy
-        self.path = fs.resolve(path)
-        # where to go back to when a remote pane is disconnected
-        self.local_path = self.path
         self.entries = []
         self.error = ""
+        self.open_folder(fs.resolve(path))
+        # where to go back to when a remote pane is disconnected
+        self.local_path = self.path
+
+    def open_folder(self, path):
+        self.path = path
         self.index = 0
         self.scroll = 0
         self.reload()
@@ -3335,6 +3341,8 @@ class Pane:
         try:
             with self.busy:
                 self.entries = self.fs.list_dir(self.path)
+            if self.parent_path():
+                self.entries.insert(0, Pane.PARENT)
             self.error = ""
         except ConnectionLost as e:
             self.entries = []
@@ -3347,13 +3355,14 @@ class Pane:
 
     def switch_fs(self, fs, path):
         self.fs = fs
-        self.path = path
-        self.index = 0
-        self.scroll = 0
-        self.reload()
+        self.open_folder(path)
+
+    def on_parent_row(self):
+        return bool(self.entries) and self.entries[self.index] is Pane.PARENT
 
     def selected(self):
-        if not self.entries:
+        """The selected file/folder, or None (also on the '..' row)."""
+        if not self.entries or self.on_parent_row():
             return None
         return self.entries[self.index]
 
@@ -3363,9 +3372,15 @@ class Pane:
             return None
         return self.fs.pathmod.join(self.path, sel[0])
 
-    def go_parent(self):
+    def parent_path(self):
         parent = self.fs.pathmod.dirname(self.path.rstrip("/"))
         if parent and parent != self.path:
+            return parent
+        return None
+
+    def go_parent(self):
+        parent = self.parent_path()
+        if parent:
             old_base = self.fs.pathmod.basename(self.path)
             self.path = parent
             self.reload()
@@ -3375,12 +3390,12 @@ class Pane:
                     break
 
     def enter(self):
+        if self.on_parent_row():
+            self.go_parent()
+            return
         sel = self.selected()
         if sel and sel[1]:
-            self.path = self.fs.pathmod.join(self.path, sel[0])
-            self.index = 0
-            self.scroll = 0
-            self.reload()
+            self.open_folder(self.fs.pathmod.join(self.path, sel[0]))
 
     def move(self, delta, page_h):
         if not self.entries:
@@ -3448,7 +3463,7 @@ HELP_TEXT = [
     "                  TARGET (right)",
     "  Up / Down       Move selection within the active pane",
     "  Left / Bksp     Go to the parent directory of the active pane",
-    "  Right / Enter   Enter the highlighted directory",
+    "  Right / Enter   Enter the highlighted directory ('..' = parent)",
     "  PgUp / PgDn     Scroll a full page within the active pane",
     "  Home / End      Jump to the first / last item in the active pane",
     "  F5              Refresh both panes from disk (in case files changed",
@@ -3977,7 +3992,8 @@ class App:
                          "data elsewhere): {} . ".format(
                              " ".join(shlex.quote(o) for o in unchecked)))
         question += "Use these flags? (N = keep your current flags)"
-        return opts if confirm(self.stdscr, question) else None
+        attr = self.bright_red_attr if risky or unchecked else 0
+        return opts if confirm(self.stdscr, question, attr) else None
 
     def load_queue_interactive(self, path):
         try:
@@ -4318,7 +4334,7 @@ class App:
         if users:
             question += (" {} unfinished queue item(s) use this host; you'll be asked "
                          "to log in again when you press F8.".format(len(users)))
-        if not confirm(self.stdscr, question):
+        if not confirm(self.stdscr, question, curses.color_pair(Color.YELLOW)):
             return
         self.registry.close(spec)
         pane.switch_fs(LOCAL_FS, pane.local_path)
@@ -4515,8 +4531,8 @@ class App:
             for i, line in enumerate(textwrap.wrap("Can't list folder: " + pane.error,
                                                    max(10, w - 4))[:page_h]):
                 safe_addstr(win, 2 + i, 2, line, curses.color_pair(Color.RED))
-        elif not pane.entries:
-            safe_addstr(win, 2, 2, "(empty)", curses.A_DIM)
+        elif not pane.entries or pane.entries == [Pane.PARENT]:
+            safe_addstr(win, 2 + len(pane.entries), 2, "(empty)", curses.A_DIM)
 
     def draw_nav(self, h, w):
         bottom_h = App.NAV_QUEUE_H
@@ -4912,7 +4928,7 @@ class App:
             self.set_opts(tool, parsed)
         elif c == ord('d'):
             if confirm(self.stdscr, "Restore default {} flags ({})?".format(
-                    tool, " ".join(flags.DEFAULTS))):
+                    tool, " ".join(flags.DEFAULTS)), self.bright_red_attr):
                 self.set_opts(tool, list(flags.DEFAULTS))
         elif c in Keys.ENTER:
             self.confirm_and_run()
@@ -4928,7 +4944,7 @@ class App:
                 return
             if not flags.has_update(self.opts_for(tool)) and not confirm(
                     self.stdscr, "-u/--update is not set for {} - newer target files may be "
-                    "overwritten. Continue anyway?".format(tool)):
+                    "overwritten. Continue anyway?".format(tool), self.bright_red_attr):
                 return
         if self.ensure_queue_connections():
             self.view = VIEW_NAV
@@ -5042,7 +5058,8 @@ class App:
                     message(self.stdscr, "'{}' is a folder - type a file name.".format(name))
                     return True
                 if os.path.lexists(name) and not confirm(
-                        self.stdscr, "'{}' already exists. Overwrite it?".format(name)):
+                        self.stdscr, "'{}' already exists. Overwrite it?".format(name),
+                        self.bright_red_attr):
                     return True
                 try:
                     self.save_queue(name)
@@ -5203,7 +5220,8 @@ class App:
             if self.queue and self.queue[self.queue_index].status == STATUS_RUNNING:
                 message(self.stdscr, "This item is being copied right now and can't be deleted. "
                         "Press P to pause - the run stops after this item.")
-            elif self.queue and confirm(self.stdscr, "Delete selected queue item?"):
+            elif self.queue and confirm(self.stdscr, "Delete selected queue item?",
+                                        self.bright_red_attr):
                 doomed = self.queue[self.queue_index]
                 doomed.cancel_event.set()
                 del self.queue[self.queue_index]
