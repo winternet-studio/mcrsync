@@ -34,7 +34,7 @@ import queue as pyqueue
 from collections import OrderedDict
 
 # Semantic versioning. A release is made by pushing the tag "v" + VERSION.
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 DEFAULT_RSYNC_OPTS = ["-a", "-u", "--stats", "--itemize-changes"]
 DEFAULT_RCLONE_OPTS = ["--update", "--links"]
