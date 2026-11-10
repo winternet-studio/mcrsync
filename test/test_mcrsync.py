@@ -51,10 +51,50 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(data["top"], "plain value")
 
     def test_rejects_unsupported(self):
-        for text in ("- item\n", "a:\n  b:\n    c: 1\n", "a: [1, 2]\n", "a: yes\n",
-                     "a: ~\n", "a: \"open\n", "  a: 1\n", "a:b\n", "a:\n\tb: 1\n"):
+        for text in ("- item\n", "a: [1, 2]\n", "a: yes\n",
+                     "a: ~\n", "a: \"open\n", "  a: 1\n", "a:b\n", "a:\n\tb: 1\n",
+                     "a: 1\n  b: 2\n", "a:\n    b: 1\n  c: 2\n", "a:\n  b:\n      c: 1\n   d: 2\n"):
             with self.assertRaises(m.SettingsError, msg=repr(text)):
                 m.Settings.parse(text)
+
+    def test_nested_and_digit_keys(self):
+        text = ("bookmarks:\n"
+                "  1:\n"
+                "    name: \"NAS photos\"\n"
+                "    port: 22\n"
+                "  3:\n"
+                "    name: x\n"
+                "top: 1\n"
+                "empty:\n"
+                "after: 2\n")
+        data = m.Settings.parse(text)
+        self.assertEqual(list(data["bookmarks"].keys()), ["1", "3"])
+        self.assertEqual(data["bookmarks"]["1"], {"name": "NAS photos", "port": 22})
+        self.assertEqual(data["top"], 1)
+        self.assertEqual(data["empty"], {})
+        self.assertEqual(data["after"], 2)
+        self.assertEqual(m.Settings.parse(m.Settings.dump(data)), data)
+        # any consistent indentation width
+        self.assertEqual(m.Settings.parse("a:\n    b:\n       c: 1\n    d: 2\n"),
+                         {"a": {"b": {"c": 1}, "d": 2}})
+
+    def test_update_rereads_the_file(self):
+        d = tempfile.mkdtemp()
+        try:
+            path = os.path.join(d, "s.yaml")
+            first = m.Settings(path)
+            first.load()
+            second = m.Settings(path)
+            second.data["from_second"] = 1
+            second.save()
+            self.assertEqual(first.update(lambda data: data.__setitem__("from_first", 2)), "")
+            self.assertEqual(m.Settings.parse(open(path).read()),
+                             {"from_second": 1, "from_first": 2})
+            # a change that returns an error isn't saved
+            self.assertEqual(first.update(lambda data: data.clear() or "no"), "no")
+            self.assertIn("from_second", open(path).read())
+        finally:
+            shutil.rmtree(d)
 
     def test_bad_file_is_not_overwritten(self):
         d = tempfile.mkdtemp()

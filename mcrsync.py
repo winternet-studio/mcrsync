@@ -437,12 +437,13 @@ class SettingsError(Exception):
 class Settings:
     """User settings stored as a small YAML subset (PyYAML usually isn't
     available on NAS Python installs): '#' comments, 'key: value' scalars
-    and one level of nested mappings. Values are integers or strings
-    (plain, 'single' or "double" quoted). Anything else is rejected with a
-    line number instead of being silently misread."""
+    and nested mappings (by indentation). Keys are kept as strings, also
+    all-digit ones. Values are integers or strings (plain, 'single' or
+    "double" quoted). Anything else is rejected with a line number instead
+    of being silently misread."""
 
     DEFAULT_PATH = os.path.join(os.path.expanduser("~"), ".mcrsync.yaml")
-    KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$")
+    KEY_RE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_]*):(?:\s+(.*))?$")
     INT_RE = re.compile(r"^-?[0-9]+$")
     # Plain scalars that real YAML would read as something other than a
     # string - require quotes so both readings agree.
@@ -482,6 +483,19 @@ class Settings:
             return "could not save settings: {}".format(e)
         return ""
 
+    def update(self, change):
+        """Read the file again, apply change(data) and save, so another
+        mcrsync instance's changes since this one started aren't lost.
+        change may return an error text to cancel without saving. Returns
+        an error string, or "" on success."""
+        self.load()
+        if self.error:
+            return "not saving settings - fix this first: " + self.error
+        problem = change(self.data)
+        if problem:
+            return problem
+        return self.save()
+
     def section(self, name):
         value = self.data.get(name)
         return value if isinstance(value, dict) else OrderedDict()
@@ -492,7 +506,9 @@ class Settings:
     @staticmethod
     def parse(text):
         data = OrderedDict()
-        current = None   # nested mapping being filled, None at top level
+        # (indent of the mapping's keys, mapping), outermost first
+        stack = [(0, data)]
+        opened = None   # (indent of its key, mapping) of the last 'key:' without value
         for n, raw in enumerate(text.splitlines(), 1):
             line = Settings._strip_comment(raw, n).rstrip()
             if not line.strip():
@@ -504,19 +520,19 @@ class Settings:
             m = Settings.KEY_RE.match(stripped)
             if not m:
                 raise SettingsError("line {}: unsupported syntax, expected 'key: value'".format(n))
+            if opened is not None and indent > opened[0]:
+                stack.append((indent, opened[1]))
+            opened = None
+            while stack[-1][0] > indent:
+                stack.pop()
+            if stack[-1][0] != indent:
+                raise SettingsError("line {}: unexpected indentation".format(n))
+            current = stack[-1][1]
             key, value = m.group(1), m.group(2)
-            if indent == 0:
-                if value is None:
-                    current = OrderedDict()
-                    data[key] = current
-                else:
-                    data[key] = Settings._parse_scalar(value, n)
-                    current = None
+            if value is None:
+                current[key] = OrderedDict()
+                opened = (indent, current[key])
             else:
-                if current is None:
-                    raise SettingsError("line {}: unexpected indentation".format(n))
-                if value is None:
-                    raise SettingsError("line {}: only one level of nesting is supported".format(n))
                 current[key] = Settings._parse_scalar(value, n)
         return data
 
@@ -575,15 +591,195 @@ class Settings:
     @staticmethod
     def dump(data):
         lines = ["# mcrsync settings - written by mcrsync, safe to edit by hand.",
-                 "# Supported: comments, 'key: value' and one level of nesting."]
+                 "# Supported: comments, 'key: value' and nested mappings."]
+        Settings._dump_mapping(data, "", lines)
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _dump_mapping(data, indent, lines):
         for key, value in data.items():
             if isinstance(value, dict):
-                lines.append("{}:".format(key))
-                for k, v in value.items():
-                    lines.append("  {}: {}".format(k, Settings._dump_scalar(v)))
+                lines.append("{}{}:".format(indent, key))
+                Settings._dump_mapping(value, indent + "  ", lines)
             else:
-                lines.append("{}: {}".format(key, Settings._dump_scalar(value)))
-        return "\n".join(lines) + "\n"
+                lines.append("{}{}: {}".format(indent, key, Settings._dump_scalar(value)))
+
+
+# Bookmarks (stored in the settings)
+# ----------------------------------------------------------------------
+
+class Bookmark:
+    """A saved pane location: connection (None = local) and folder. An
+    entry that can't be used keeps its error and raw data, so it can be
+    shown and deleted, and is saved back unchanged."""
+
+    def __init__(self, key, name="", spec=None, path="", error=""):
+        self.key = key          # key in the settings, the number as text
+        self.name = name
+        self.spec = spec
+        self.path = path
+        self.error = error
+
+    def number(self):
+        """The bookmark's number, or None if the key isn't one."""
+        if self.key.isdigit() and self.key == str(int(self.key)) and int(self.key) > 0:
+            return int(self.key)
+        return None
+
+    def location(self):
+        return (self.spec.key() if self.spec else "local", self.path)
+
+    def display_location(self):
+        return self.spec.display_path(self.path) if self.spec else self.path
+
+    @staticmethod
+    def from_entry(key, entry):
+        bm = Bookmark(key)
+        if bm.number() is None:
+            bm.error = "{!r} is not a bookmark number (1, 2, ...)".format(key)
+            return bm
+        if not isinstance(entry, dict):
+            bm.error = "not a mapping of name, type and path"
+            return bm
+        name = entry.get("name")
+        path = entry.get("path")
+        kind = entry.get("type", "local")
+        if not isinstance(name, str) or not name.strip():
+            bm.error = "name is missing"
+        elif not isinstance(path, str) or not path or "\0" in path or "\n" in path:
+            bm.error = "path is missing or invalid"
+        elif kind not in ("local", "ssh", "rclone"):
+            bm.error = "unknown type {!r}".format(kind)
+        else:
+            try:
+                bm.spec = conn_from_dict(entry) if kind != "local" else None
+            except KeyError as e:
+                bm.error = "{} is missing".format(e)
+            except (TypeError, ValueError) as e:
+                bm.error = str(e)
+        if not bm.error:
+            bm.name = name.strip()
+            bm.path = path
+        return bm
+
+    @staticmethod
+    def to_entry(name, spec, path):
+        entry = OrderedDict([("name", name)])
+        if spec is None:
+            entry["type"] = "local"
+        else:
+            entry.update(spec.to_dict())
+        entry["path"] = path
+        return entry
+
+    @staticmethod
+    def suggest_name(spec, path):
+        folder = posixpath.basename(path.rstrip("/"))
+        if spec is None:
+            return folder or "/"
+        where = spec.host if spec.kind == "ssh" else spec.remote
+        return "{} ({})".format(folder, where) if folder else where
+
+
+class Bookmarks:
+    """The bookmark list in the settings ('bookmarks:' with one numbered
+    entry each). Every change reads the file again and saves straight
+    away, so instances running side by side don't drop each other's."""
+
+    SECTION = "bookmarks"
+    QUICK_MAX = 9       # numbers with a quick-jump key
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.items = []
+        self.error = ""
+
+    def load(self):
+        self.settings.load()
+        self.items = []
+        self.error = self.settings.error
+        if self.error:
+            return
+        raw = self.settings.data.get(Bookmarks.SECTION, OrderedDict())
+        if not isinstance(raw, dict):
+            self.error = "'{}' in {} must contain numbered entries".format(
+                Bookmarks.SECTION, self.settings.path)
+            return
+        self.items = [Bookmark.from_entry(k, v) for k, v in raw.items()]
+        # numbered first, in order; broken keys after them
+        self.items.sort(key=lambda b: (b.number() is None, b.number() or 0, b.key))
+
+    def get(self, number):
+        for bm in self.items:
+            if bm.number() == number:
+                return bm
+        return None
+
+    def find(self, spec, path):
+        location = Bookmark(None, spec=spec, path=path).location()
+        for bm in self.items:
+            if not bm.error and bm.location() == location:
+                return bm
+        return None
+
+    def _section(self, data):
+        raw = data.get(Bookmarks.SECTION)
+        if raw is None:
+            raw = data[Bookmarks.SECTION] = OrderedDict()
+        if not isinstance(raw, dict):
+            return None
+        return raw
+
+    def add(self, name, spec, path):
+        """Returns (number, error); number is None if not added."""
+        added = []
+
+        def change(data):
+            raw = self._section(data)
+            if raw is None:
+                return "'{}' in the settings must contain numbered entries".format(
+                    Bookmarks.SECTION)
+            location = Bookmark(None, spec=spec, path=path).location()
+            for key, entry in raw.items():
+                bm = Bookmark.from_entry(key, entry)
+                if not bm.error and bm.location() == location:
+                    return "Already bookmarked as [{}] {}.".format(key, bm.name)
+            number = 1
+            while str(number) in raw:
+                number += 1
+            raw[str(number)] = Bookmark.to_entry(name, spec, path)
+            added.append(number)
+            return ""
+
+        err = self.settings.update(change)
+        self.load()
+        if err:
+            return None, err
+        return added[0], ""
+
+    def rename(self, key, name):
+        def change(data):
+            raw = self._section(data)
+            entry = raw.get(key) if raw is not None else None
+            if not isinstance(entry, dict):
+                return "Bookmark [{}] no longer exists.".format(key)
+            entry["name"] = name
+            return ""
+
+        err = self.settings.update(change)
+        self.load()
+        return err
+
+    def delete(self, key):
+        def change(data):
+            raw = self._section(data)
+            if raw is not None:
+                raw.pop(key, None)
+            return ""
+
+        err = self.settings.update(change)
+        self.load()
+        return err
 
 
 # ----------------------------------------------------------------------
@@ -883,6 +1079,26 @@ class Fs:
     def resolve(self, path):
         raise NotImplementedError
 
+    def resolve_folder(self, path):
+        """Like resolve(), but raises FsError unless path is a folder."""
+        return self.resolve(path)
+
+    def nearest_folder(self, path):
+        """(resolved path, True) if path is a folder, else (the nearest
+        folder above it, False). Gives up at the starting folder that
+        resolve("") is."""
+        candidate = path
+        while True:
+            try:
+                return self.resolve_folder(candidate), candidate == path
+            except ConnectionLost:
+                raise
+            except FsError:
+                if candidate == "":
+                    raise
+            stripped = candidate.rstrip("/")
+            candidate = self.pathmod.dirname(stripped) if stripped else ""
+
     def list_dir(self, path):
         """Sorted list of (name, is_dir), dirs first."""
         raise NotImplementedError
@@ -925,6 +1141,12 @@ class LocalFs(Fs):
 
     def resolve(self, path):
         return os.path.abspath(os.path.expanduser(path))
+
+    def resolve_folder(self, path):
+        resolved = self.resolve(path)
+        if not os.path.isdir(resolved):
+            raise FsError("folder not found: {}".format(resolved))
+        return resolved
 
     def list_dir(self, path):
         """Return sorted list of (name, is_dir) for a directory, dirs first."""
@@ -3199,6 +3421,98 @@ def pick_dialog(stdscr, title, label, options, index=0, notes=None):
             index = min(len(options) - 1, index + 1)
 
 
+class BookmarkDialog:
+    """The bookmark list popup. run() returns what the user chose, as
+    (action, bookmark): "go", "add" (bookmark None), "rename", "delete";
+    or None for Esc. The caller does the action and opens it again if
+    the list should stay."""
+
+    HINT = "Enter/1-9: go  A: add  F2: rename  D: delete  Esc: close"
+    EMPTY = "No bookmarks yet. Press A to bookmark this folder."
+
+    def __init__(self, stdscr, bookmarks, index=0):
+        self.stdscr = stdscr
+        self.bookmarks = bookmarks
+        self.index = max(0, min(index, len(bookmarks) - 1))
+        self.scroll = 0
+
+    def rows(self):
+        """(text, attr) per bookmark."""
+        name_w = min(24, max([len(b.name) for b in self.bookmarks if not b.error] + [4]))
+        rows = []
+        for bm in self.bookmarks:
+            label = "[{}]".format(bm.key).ljust(5)
+            if bm.error:
+                rows.append(("{} <invalid: {}>".format(label, bm.error),
+                             curses.color_pair(Color.RED)))
+            else:
+                name = bm.name if len(bm.name) <= name_w else bm.name[:name_w - 1] + "~"
+                rows.append(("{} {}  {}".format(label, name.ljust(name_w),
+                                                bm.display_location()), 0))
+        return rows
+
+    def run(self):
+        h, w = self.stdscr.getmaxyx()
+        rows = self.rows()
+        longest = max([len(r[0]) for r in rows] + [len(BookmarkDialog.EMPTY),
+                                                   len(BookmarkDialog.HINT)])
+        box_w = min(longest + 6, w - 2)
+        list_h = max(1, min(len(rows) or 1, h - 6))
+        box_h = list_h + 5
+        win = curses.newwin(box_h, box_w, max(0, (h - box_h) // 2), max(0, (w - box_w) // 2))
+        win.keypad(True)
+        while True:
+            if self.index < self.scroll:
+                self.scroll = self.index
+            if self.index >= self.scroll + list_h:
+                self.scroll = self.index - list_h + 1
+            win.erase()
+            win.border()
+            safe_addstr(win, 0, 2, " Bookmarks ", curses.A_BOLD)
+            if not rows:
+                safe_addstr(win, 2, 3, BookmarkDialog.EMPTY)
+            for i in range(list_h):
+                n = self.scroll + i
+                if n >= len(rows):
+                    break
+                text, attr = rows[n]
+                if n == self.index:
+                    attr |= curses.A_REVERSE
+                safe_addstr(win, 2 + i, 3, text[:box_w - 6].ljust(box_w - 6), attr)
+            safe_addstr(win, box_h - 2, 2, BookmarkDialog.HINT, curses.A_DIM)
+            win.noutrefresh()
+            curses.doupdate()
+            c = read_key(win)
+            selected = self.bookmarks[self.index] if self.bookmarks else None
+            if c == Keys.ESC:
+                return None
+            if c in Keys.ENTER and selected:
+                return "go", selected
+            if isinstance(c, str) and c in "123456789":
+                picked = [b for b in self.bookmarks if b.number() == int(c)]
+                if picked:
+                    return "go", picked[0]
+                curses.flash()
+            if c in ("a", "A"):
+                return "add", None
+            if c == curses.KEY_F2 and selected:
+                return "rename", selected
+            if c in ("d", "D", curses.KEY_DC) and selected:
+                return "delete", selected
+            if c == curses.KEY_UP:
+                self.index = max(0, self.index - 1)
+            elif c == curses.KEY_DOWN:
+                self.index = min(len(rows) - 1, self.index + 1) if rows else 0
+            elif c == curses.KEY_PPAGE:
+                self.index = max(0, self.index - list_h)
+            elif c == curses.KEY_NPAGE:
+                self.index = min(len(rows) - 1, self.index + list_h) if rows else 0
+            elif c == curses.KEY_HOME:
+                self.index = 0
+            elif c == curses.KEY_END:
+                self.index = max(0, len(rows) - 1)
+
+
 def flash(win):
     curses.flash()
 
@@ -3497,6 +3811,12 @@ HELP_TEXT = [
     "                  to an rclone remote (you choose which), or - if it",
     "                  already is remote - disconnect it and go back to the",
     "                  local folder it showed before.",
+    "  B               Bookmarks: saved folders, local or remote, shared",
+    "                  by both panes. Enter or 1-9 opens one in the active",
+    "                  pane, connecting it if needed. A bookmarks the",
+    "                  current folder, F2 renames, D deletes. A missing",
+    "                  folder opens the nearest one above it.",
+    "  1-9             Open bookmark 1-9 in the active pane",
     "",
     "REMOTE (SSH) PANES",
     "  Either pane can show a remote host instead of the local disk, so you",
@@ -3777,6 +4097,7 @@ class App:
         self.runner = Transfers(self.registry)
         self.settings = Settings()
         self.settings.load()
+        self.bookmarks = Bookmarks(self.settings)
         self.busy = BusyIndicator(self.busy_cell)
         self.registry.busy = self.busy
         self.update_notice = UpdateNotice()
@@ -4155,16 +4476,32 @@ class App:
         else:
             self.connect_pane(pane)
 
-    def connect_pane(self, pane):
-        """Pane rules: an SSH pane needs a local pane opposite (rsync can't
-        copy between two remote hosts, and rclone can't use mcrsync's SSH
-        login); an rclone pane can face a local or another rclone pane."""
-        other = self.right if pane is self.left else self.left
+    def other_pane(self, pane):
+        return self.right if pane is self.left else self.left
+
+    def pane_rule_problem(self, pane, kind=None):
+        """Why pane can't be connected (to kind "ssh"/"rclone", None = to
+        anything), or "". Pane rules: an SSH pane needs a local pane
+        opposite (rsync can't copy between two remote hosts, and rclone
+        can't use mcrsync's SSH login); an rclone pane can face a local or
+        another rclone pane."""
+        other = self.other_pane(pane)
         if other.fs.kind == "ssh":
-            message(self.stdscr, "The {0} pane is connected to {1} over SSH, so this pane must "
+            return ("The {0} pane is connected to {1} over SSH, so this pane must "
                     "stay local: rsync can't copy between two remote hosts, and rclone can't "
                     "use mcrsync's SSH login. Press O in the {0} pane to disconnect it "
                     "first.".format(self.pane_name(other), other.fs.spec.key()))
+        if kind == "ssh" and other.fs.kind == "rclone":
+            return ("The {0} pane shows the rclone remote {1}, so this pane can't use SSH: "
+                    "rclone can't use mcrsync's SSH login. Press O in the {0} pane to "
+                    "disconnect it first.".format(self.pane_name(other), other.fs.spec.key()))
+        return ""
+
+    def connect_pane(self, pane):
+        other = self.other_pane(pane)
+        problem = self.pane_rule_problem(pane)
+        if problem:
+            message(self.stdscr, problem)
             return
         if self.settings.error:
             message(self.stdscr, "Could not read saved connection settings ({}). The form "
@@ -4183,17 +4520,32 @@ class App:
         if choice is None:
             return
         kind = "rclone" if choice == 1 else "ssh"
+        # saved with the connection's own entries once it works
         self.settings.set_section("last_connect", OrderedDict([("kind", kind)]))
         if kind == "rclone":
             self.connect_rclone_pane(pane)
         else:
             self.connect_ssh_pane(pane)
 
-    def save_settings(self):
+    def save_connect_settings(self, name, values):
+        """Save the connect form's entries (section name) and the chosen
+        connection kind. Remembered for this session even if the file
+        can't be saved."""
+        sections = [(name, values),
+                    ("last_connect", self.settings.section("last_connect"))]
+
+        def change(data):
+            for section, entries in sections:
+                if entries:
+                    data[section] = entries
+
         if not self.settings.error:
-            err = self.settings.save()
+            err = self.settings.update(change)
             if err:
                 self.log(err)
+        for section, entries in sections:
+            if entries:
+                self.settings.set_section(section, entries)
 
     def connect_rclone_pane(self, pane):
         try:
@@ -4219,10 +4571,7 @@ class App:
         if idx is None:
             return
         spec = RcloneSpec(usable[idx])
-        with self.busy:
-            err = self.registry.open_rclone(spec)
-        if err:
-            message(self.stdscr, "Can't use {}: {}".format(spec.key(), err))
+        if not self.open_connection(spec):
             return
         fs = self.registry.fs_for(spec)
         value = str(last.get("path", "")) if spec.remote == last_remote else ""
@@ -4245,20 +4594,24 @@ class App:
                 return
             except FsError as e:
                 error = str(e)[:1].upper() + str(e)[1:]
-        self.settings.set_section("last_rclone", OrderedDict([
+        self.save_connect_settings("last_rclone", OrderedDict([
             ("remote", spec.remote),
             ("path", value),
         ]))
-        self.save_settings()
-        pane.local_path = pane.path
+        self.show_connected(pane, fs, path)
+
+    def show_connected(self, pane, fs, path):
+        """Switch pane to the newly connected fs."""
+        if not pane.fs.is_remote:
+            pane.local_path = pane.path
         pane.switch_fs(fs, path)
         self.reschedule_offline_sizes()
-        self.log("Connected {} pane to {}".format(self.pane_name(pane), spec.key()))
-        if not fs.remote.modtime_ok:
+        self.log("Connected {} pane to {}".format(self.pane_name(pane), fs.spec.key()))
+        if fs.kind == "rclone" and not fs.remote.modtime_ok:
             message(self.stdscr, "Note: {} can't store modification times. rclone's --update "
                     "then compares with upload times, so 'newer on target' (and the conflicts "
                     "it finds) isn't reliable for this remote. The F8 screen repeats this "
-                    "warning.".format(spec.key()))
+                    "warning.".format(fs.spec.key()))
 
     def connect_ssh_pane(self, pane):
         last = self.settings.section("last_remote")
@@ -4290,18 +4643,16 @@ class App:
             if not error:
                 break
 
-        self.settings.set_section("last_remote", OrderedDict([
+        self.save_connect_settings("last_remote", OrderedDict([
             ("user", spec.user),
             ("host", spec.host),
             ("port", spec.port),
             ("base_path", values[3]),
             ("keyfile", spec.keyfile),
         ]))
-        self.save_settings()
 
-        if not self.registry.is_open(spec):
-            if self.registry.open_interactive(self.stdscr, [spec]):
-                return
+        if not self.open_connection(spec):
+            return
         fs = self.registry.fs_for(spec)
         try:
             with self.busy:
@@ -4316,16 +4667,24 @@ class App:
                 return
             message(self.stdscr, "Base path '{}' can't be opened ({}) - showing the home "
                     "directory instead.".format(values[3], e))
-        pane.local_path = pane.path
-        pane.switch_fs(fs, path)
-        self.reschedule_offline_sizes()
-        self.log("Connected {} pane to {}".format(self.pane_name(pane), spec.key()))
+        self.show_connected(pane, fs, path)
 
     def validate_remote_form(self, values):
         user, host, port, base, keyfile = values
         return ConnSpec.from_form(user, host, port, keyfile)
 
     def disconnect_pane(self, pane):
+        question = "Disconnect the {} pane from {} and go back to {}?".format(
+            self.pane_name(pane), pane.fs.spec.key(), pane.local_path)
+        if not self.may_leave_connection(pane, question):
+            return
+        self.close_pane_connection(pane)
+        pane.switch_fs(LOCAL_FS, pane.local_path)
+
+    def may_leave_connection(self, pane, question=None):
+        """Whether pane may leave its connection. Refused while the run uses
+        it; question is asked first, if given or if unfinished queue items
+        use it."""
         spec = pane.fs.spec
         users = [it for it in self.queue
                  if it.status != STATUS_OK and
@@ -4333,17 +4692,179 @@ class App:
         if users and self.running:
             message(self.stdscr, "The running queue uses {} - wait for it to finish "
                     "before disconnecting.".format(spec.key()))
-            return
-        question = "Disconnect the {} pane from {} and go back to {}?".format(
-            self.pane_name(pane), spec.key(), pane.local_path)
+            return False
         if users:
-            question += (" {} unfinished queue item(s) use this host; you'll be asked "
-                         "to log in again when you press F8.".format(len(users)))
-        if not confirm(self.stdscr, question, curses.color_pair(Color.YELLOW)):
-            return
-        self.registry.close(spec)
-        pane.switch_fs(LOCAL_FS, pane.local_path)
+            note = ("{} unfinished queue item(s) use this host; you'll be asked to log in "
+                    "again when you press F8.".format(len(users)))
+            question = "{} {}".format(
+                question or "Leave {}?".format(spec.key()), note)
+        if question is None:
+            return True
+        return confirm(self.stdscr, question, curses.color_pair(Color.YELLOW))
+
+    def close_pane_connection(self, pane):
+        """Close pane's connection, unless the other pane still uses it."""
+        spec = pane.fs.spec
+        other = self.other_pane(pane).fs.spec
+        if other is None or other.key() != spec.key():
+            self.registry.close(spec)
         self.log("Disconnected {} pane from {}".format(self.pane_name(pane), spec.key()))
+
+    def open_connection(self, spec):
+        """Log in to / check spec if needed. Returns False (after telling
+        the user) if it failed."""
+        if spec.kind == "rclone":
+            with self.busy:
+                err = self.registry.open_rclone(spec)
+            if err:
+                message(self.stdscr, "Can't use {}: {}".format(spec.key(), err))
+                return False
+            return True
+        if self.registry.is_open(spec):
+            return True
+        # ssh tells why in the plain terminal
+        return not self.registry.open_interactive(self.stdscr, [spec])
+
+    # ---------------- bookmarks ----------------
+    def open_bookmarks(self, pane):
+        index = None
+        while True:
+            self.bookmarks.load()
+            if self.bookmarks.error:
+                message(self.stdscr, "Can't use bookmarks: {}".format(self.bookmarks.error))
+                return
+            items = self.bookmarks.items
+            if index is None:
+                current = self.bookmarks.find(pane.fs.spec, pane.path)
+                index = items.index(current) if current else 0
+            # repaint what earlier popups and messages covered
+            self.draw()
+            dialog = BookmarkDialog(self.stdscr, items, index)
+            choice = dialog.run()
+            if choice is None:
+                return
+            index = dialog.index
+            action, bm = choice
+            if action == "go":
+                self.draw()
+                self.jump_to_bookmark(pane, bm)
+                return
+            if action == "add":
+                number = self.add_bookmark(pane)
+                if number is not None:
+                    added = self.bookmarks.get(number)
+                    index = self.bookmarks.items.index(added) if added else index
+            elif action == "rename":
+                self.rename_bookmark(bm)
+            elif action == "delete":
+                self.delete_bookmark(bm)
+
+    def quick_jump(self, pane, number):
+        self.bookmarks.load()
+        if self.bookmarks.error:
+            message(self.stdscr, "Can't use bookmarks: {}".format(self.bookmarks.error))
+            return
+        bm = self.bookmarks.get(number)
+        if bm is None:
+            curses.flash()
+            return
+        self.jump_to_bookmark(pane, bm)
+
+    def ask_bookmark_name(self, title, value, hint):
+        error = ""
+        while True:
+            result = form_dialog(self.stdscr, title, [("Name", value, hint)], error)
+            if result is None:
+                return None
+            value = result[0].strip()
+            if value:
+                return value
+            error = "The name can't be empty."
+
+    def add_bookmark(self, pane):
+        """Returns the new bookmark's number, or None."""
+        spec, path = pane.fs.spec, pane.path
+        existing = self.bookmarks.find(spec, path)
+        if existing:
+            message(self.stdscr, "Already bookmarked as [{}] {}.".format(
+                existing.key, existing.name))
+            return None
+        name = self.ask_bookmark_name(
+            "Add bookmark", Bookmark.suggest_name(spec, path),
+            "For {}".format(pane.fs.display_path(path)))
+        if name is None:
+            return None
+        number, err = self.bookmarks.add(name, spec, path)
+        if err:
+            message(self.stdscr, err)
+            return None
+        note = ""
+        if number > Bookmarks.QUICK_MAX:
+            note = " (no quick-jump key - delete one of 1-{} to get one)".format(
+                Bookmarks.QUICK_MAX)
+        self.log("Bookmarked [{}] {}{}".format(number, name, note))
+        return number
+
+    def rename_bookmark(self, bm):
+        if bm.error:
+            message(self.stdscr, "Bookmark [{}] is invalid ({}) - it can only be deleted "
+                    "here.".format(bm.key, bm.error))
+            return
+        name = self.ask_bookmark_name("Rename bookmark [{}]".format(bm.key), bm.name,
+                                      "For {}".format(bm.display_location()))
+        if name is None or name == bm.name:
+            return
+        err = self.bookmarks.rename(bm.key, name)
+        if err:
+            message(self.stdscr, err)
+            return
+        self.log("Renamed bookmark [{}] to {}".format(bm.key, name))
+
+    def delete_bookmark(self, bm):
+        label = bm.name if not bm.error else "(invalid)"
+        if not confirm(self.stdscr, "Delete bookmark [{}] {}?".format(bm.key, label),
+                       curses.color_pair(Color.YELLOW)):
+            return
+        err = self.bookmarks.delete(bm.key)
+        if err:
+            message(self.stdscr, err)
+            return
+        self.log("Deleted bookmark [{}] {}".format(bm.key, label))
+
+    def jump_to_bookmark(self, pane, bm):
+        """Show bm's folder in pane, connecting it first if needed. The
+        pane's old connection is left only once the new one works."""
+        if bm.error:
+            message(self.stdscr, "Bookmark [{}] can't be used: {}.".format(bm.key, bm.error))
+            return
+        spec = bm.spec
+        old = pane.fs.spec
+        same = (old.key() if old else None) == (spec.key() if spec else None)
+        if not same:
+            problem = self.pane_rule_problem(pane, spec.kind) if spec else ""
+            if problem:
+                message(self.stdscr, problem)
+                return
+            if old is not None and not self.may_leave_connection(pane):
+                return
+            if spec is not None and not self.open_connection(spec):
+                return
+        fs = pane.fs if same else self.registry.fs_for(spec)
+        try:
+            with self.busy:
+                path, exact = fs.nearest_folder(bm.path)
+        except FsError as e:
+            message(self.stdscr, "Can't open bookmark [{}] {}: {}".format(bm.key, bm.name, e))
+            return
+        if not same and old is not None:
+            self.close_pane_connection(pane)
+        if same or spec is None:
+            pane.switch_fs(fs, path)
+        else:
+            self.show_connected(pane, fs, path)
+        if not exact:
+            message(self.stdscr, "Folder {} no longer exists - showing {}.".format(
+                bm.display_location(), fs.display_path(path)))
 
     def reconnect_panes_if_needed(self):
         for pane in (self.left, self.right):
@@ -5121,6 +5642,10 @@ class App:
             self.refresh_panes()
         elif c == ord('o'):
             self.toggle_remote(pane)
+        elif c == ord('b'):
+            self.open_bookmarks(pane)
+        elif ord('1') <= c <= ord('9'):
+            self.quick_jump(pane, c - ord('0'))
         elif c == curses.KEY_UP:
             pane.move(-1, page_h)
         elif c == curses.KEY_DOWN:

@@ -1,6 +1,6 @@
 # mcrsync
 
-A Midnight-Commander-style `rsync` queue manager built for Python 3.4+ by Claude; originally by JRPdata. Since the original version, remote SSH and `rclone` support has been added, including a test suite. Also inspired by the [Total Commander](https://ghisler.com) application for Windows.
+A [Midnight Commander](https://midnight-commander.org)-style `rsync` queue manager built for Python 3.4+ by Claude; originally by JRPdata. Since the original version, remote SSH and `rclone` support has been added, including a test suite. Also inspired by the [Total Commander](https://ghisler.com) application for Windows.
 
 `mcrsync` provides a visual, dual-pane terminal interface for building, editing, and executing large batches of `rsync` file transfers. It was originally designed for managing localized backup routines on older Network Attached Storage (NAS) hardware, offering modern convenience while maintaining legacy compatibility.
 
@@ -50,6 +50,7 @@ Pick a file or folder in the left pane, go to the destination in the right pane 
 * **Dual-Pane Navigation:** Browse your source and target directories side-by-side. 
 * **Remote over SSH:** Either pane can be switched to a remote host (press `O`), to push to or pull from another NAS or Linux server. Log in with a key file or a password; the password is asked by `ssh` itself and never stored. A dropped connection pauses the run until you log in again. Host names and IPv4 addresses are supported (not IPv6).
 * **Cloud storage via rclone:** A pane can also show a remote from your own `rclone config` (S3, Backblaze B2, Google Drive, OneDrive, WebDAV, ...). Items to or from it are copied with `rclone` instead of `rsync`, with the same queue, progress, conflict detection and Verify view. Cloud-to-cloud works too. See [rclone panes](#rclone-panes).
+* **Bookmarks:** Save folders, local or remote, and open them with `B` or straight away with `1`-`9`. A remote bookmark connects the pane for you.
 * **Resumable Queues:** Save your entire queue and custom flags to a JSON file. You can pause, quit, reload, and resume right where you left off. Remote hosts are saved with the queue (never passwords).
 * **Background Sizing:** Each item's total size and number of files (SIZE and FILES columns in the queue view) are calculated in the background as you build your queue.
 * **Live Progress:** While a run is going, a progress line shows the running item's phase, how much of it has been reviewed, what was actually copied, speed, conflicts, elapsed time and the current file. The status bar shows whole-queue progress and ETA. A run log (`G`) lists every copied file, conflict, error and connection event.
@@ -152,6 +153,8 @@ Values must be attached with `=` (`--exclude='*.tmp'`, not `--exclude '*.tmp'`),
 * `Home` / `End`: Jump to the first / last item.
 * `F5`: Refresh both panes (offers to log in again if a remote pane lost its connection).
 * `O`: Connect the active pane to a remote host via SSH or to an rclone remote, or disconnect it and return to the local folder.
+* `B`: Bookmarks, shared by both panes. `Enter` or `1`-`9` opens one in the active pane, `A` bookmarks the current folder, `F2` renames, `D` deletes. If the folder no longer exists, the nearest one above it opens.
+* `1`-`9`: Open bookmark 1-9 in the active pane.
 * `C`: Queue a copy (Left pane selection -> Right pane current directory).
 * `F2`: Rename the selected file/folder. Never replaces an existing file or folder.
 * `Insert`: Create a new folder in the active pane.
@@ -190,7 +193,7 @@ While monitoring your queue, items will display one of the following statuses:
 
 ## Files
 
-* **`~/.mcrsync.yaml`:** your SSH and rclone connection entries (never passwords). Each user has their own, readable only by them. Installed in `/usr/local/bin`, mcrsync can be run by every user, including root.
+* **`~/.mcrsync.yaml`:** your SSH and rclone connection entries and bookmarks (never passwords). A bookmark's number is its key under `bookmarks:`; edit the file to renumber. Each user has their own, readable only by them. Installed in `/usr/local/bin`, mcrsync can be run by every user, including root.
 * **Queue files:** saved wherever you choose with `S`. The default `queue.json` ends up in the folder you started mcrsync from.
 * **Temporary files** (SSH connection sockets, size calculations) are put in the system temp folder and removed when mcrsync exits.
 
