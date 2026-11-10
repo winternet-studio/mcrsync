@@ -4,9 +4,16 @@ What's new and changed in each release. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-10
+
+### Added
+
+- Bookmarks
+- Check for newer version
+
 ## [2.1.1] - 2026-11-09
 
-- 5114549 feat: ".." for parent folder (as in midnight commander)
+- ".." for parent folder (as in midnight commander)
 
 ## [2.1.0] - 2026-11-03
 
