@@ -243,7 +243,7 @@ class Tmux(object):
         self.stop()
         subprocess.check_call(["tmux", "-f", self.CONF, "new-session", "-d", "-s", self.SESSION,
                                "-x", str(COLS), "-y", str(ROWS), "-c", cwd,
-                               "{0} python3 {1}; sleep 600".format(env, APP)])
+                               "MCRSYNC_LATEST_VERSION_URL= {0} python3 {1}; sleep 600".format(env, APP)])
         self.wait_for("SOURCE [")
 
     def stop(self):

@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_mcrsync import TEST_HOSTS, KEYFILE, PORT
 
 APP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mcrsync.py")
+# no startup check for a newer release: the screens must not depend on it
+os.environ["MCRSYNC_LATEST_VERSION_URL"] = ""
+NO_UPDATE_CHECK = "MCRSYNC_LATEST_VERSION_URL= "
 HOST = TEST_HOSTS[0] if TEST_HOSTS else ""
 SETTINGS = os.path.expanduser("~/.mcrsync.yaml")
 
@@ -68,7 +71,7 @@ class UiTest(unittest.TestCase):
     def start(self, args="", cwd=None):
         subprocess.check_call(["tmux", "new-session", "-d", "-s", self.SESSION, "-x", "150",
                                "-y", "40", "-c", cwd or self.root,
-                               "python3 {0} {1}; sleep 600".format(APP, args)])
+                               NO_UPDATE_CHECK + "python3 {0} {1}; sleep 600".format(APP, args)])
         self.wait_for("SOURCE [")
 
     def keys(self, *keys, literal=False, delay=0.6):
@@ -514,7 +517,7 @@ class UiTest(unittest.TestCase):
 
     def test_small_terminal(self):
         subprocess.check_call(["tmux", "new-session", "-d", "-s", self.SESSION, "-x", "40",
-                               "-y", "12", "-c", self.root, "python3 {0}; sleep 600".format(APP)])
+                               "-y", "12", "-c", self.root, NO_UPDATE_CHECK + "python3 {0}; sleep 600".format(APP)])
         s = self.wait_for("Terminal too small")
         self.assertIn("need 48 x 15", s)
         # keys must not act on the invisible UI

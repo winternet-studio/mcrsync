@@ -4,6 +4,7 @@ test/README.md) - the SSH tests need the remote containers and are skipped
 when MCRSYNC_TEST_HOSTS isn't set."""
 
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -400,6 +401,86 @@ class RemoteTest(RemoteBase):
             self.assertEqual(it.status, m.STATUS_PENDING)
             with self.assertRaises(m.ConnectionLost):
                 fs.list_dir(work)
+
+
+class UpdateNoticeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def check(self, body):
+        path = os.path.join(self.tmp, "latest")
+        with open(path, "wb") as f:
+            f.write(body)
+        notice = m.UpdateNotice("file://" + path)
+        notice._check()
+        return notice.newer_version
+
+    def test_newer(self):
+        self.assertEqual(self.check(b'{"version": "999.0.0"}'), "999.0.0")
+
+    def test_same_or_older(self):
+        self.assertIsNone(self.check('{{"version": "{}"}}'.format(m.VERSION).encode()))
+        self.assertIsNone(self.check(b'{"version": "0.0.1"}'))
+
+    def test_unexpected_answers_are_ignored(self):
+        for body in (b"", b"<html>Not Found</html>", b"[1]", b'{"error": "x"}',
+                     b'{"version": 3}', b'{"version": "v999.0.0"}', b'{"version": "999.0"}',
+                     b"\xff\xfe"):
+            self.assertIsNone(self.check(body), body)
+
+    def test_unreachable_is_ignored(self):
+        notice = m.UpdateNotice("http://127.0.0.1:1/latest-version")
+        notice._check()
+        self.assertIsNone(notice.newer_version)
+
+    def test_slow_server_is_ignored(self):
+        import socket
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        self.addCleanup(server.close)
+        notice = m.UpdateNotice("http://127.0.0.1:{}/".format(server.getsockname()[1]))
+        old_timeout = m.UpdateNotice.TIMEOUT
+        m.UpdateNotice.TIMEOUT = 0.5
+        self.addCleanup(setattr, m.UpdateNotice, "TIMEOUT", old_timeout)
+        started = time.time()
+        notice._check()     # connects, but never gets an answer
+        self.assertLess(time.time() - started, 5)
+        self.assertIsNone(notice.newer_version)
+
+    def test_sends_user_agent(self):
+        import http.server
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("User-Agent"))
+                body = b'{"version": "999.0.0"}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(server.server_close)
+        t = threading.Thread(target=server.handle_request)
+        t.start()
+        notice = m.UpdateNotice("http://127.0.0.1:{}/".format(server.server_port))
+        notice._check()
+        t.join(5)
+        self.assertEqual(notice.newer_version, "999.0.0")
+        self.assertEqual(len(seen), 1)
+        self.assertRegex(seen[0], r"^mcrsync/{} \(\w+; Python \d+\.\d+\.\d+\)$".format(
+            re.escape(m.VERSION)))
+
+    def test_empty_url_turns_it_off(self):
+        notice = m.UpdateNotice("")
+        notice.start()
+        self.assertIsNone(notice.newer_version)
 
 
 if __name__ == "__main__":

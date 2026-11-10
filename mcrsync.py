@@ -3457,6 +3457,10 @@ HELP_TEXT = [
     "  right end of the QUEUE box's top border (in other views: of the",
     "  screen's). Keys pressed meanwhile are handled afterwards.",
     "",
+    "  When a newer release exists, 'vX.Y.Z available' shows left of that",
+    "  spot. 'mcrsync selfupdate' (or 'python3 mcrsync.py selfupdate')",
+    "  installs it.",
+    "",
     "NAVIGATE VIEW (left = SOURCE pane, right = TARGET pane, bottom = last",
     "5 queued items)",
     "  Tab             Switch active pane between SOURCE (left) and",
@@ -3775,6 +3779,7 @@ class App:
         self.settings.load()
         self.busy = BusyIndicator(self.busy_cell)
         self.registry.busy = self.busy
+        self.update_notice = UpdateNotice()
         self.left = Pane(start_path, LOCAL_FS, self.busy)
         self.right = Pane(start_path, LOCAL_FS, self.busy)
         self.active = "left"
@@ -4407,6 +4412,24 @@ class App:
         """Title on the top border the busy spinner shares."""
         safe_addstr(win, 0, 2, text, attr)
         self.frame_title_end = 2 + len(text)
+        self.draw_update_notice(win)
+
+    def draw_update_notice(self, win):
+        """Right-aligned on the top border, but clear of the widest busy
+        spinner label at its right end. Left out if it doesn't fit."""
+        version = self.update_notice.newer_version
+        if not version:
+            return
+        w = win.getmaxyx()[1]
+        # exclusive end: one border cell is kept free before the spinner
+        end = w - 1 - len(BusyIndicator.LABELS[0].format("x"))
+        for text in (" v{} available - mcrsync selfupdate ".format(version),
+                     " v{} available ".format(version)):
+            x = end - len(text)
+            # one border cell is kept free after the title
+            if x > self.frame_title_end:
+                safe_addstr(win, 0, x, text, curses.color_pair(Color.YELLOW) | curses.A_BOLD)
+                return
 
     def draw_too_small(self, h, w):
         lines = ["Terminal too small",
@@ -5298,6 +5321,66 @@ UPDATE_URL = "https://github.com/winternet-studio/mcrsync/releases/latest/downlo
 
 VERSION_RE = re.compile(br'^VERSION = "(\d+)\.(\d+)\.(\d+)"$', re.M)
 
+# Returns {"version": "x.y.z"} of the latest release. Plain http: old Pythons
+# (e.g. on a NAS) often lack current CA certificates, and the answer can't do
+# harm - it only decides whether a notice shows.
+LATEST_VERSION_URL = "http://mcrsync.winternet.no/latest-version"
+
+
+class UpdateNotice:
+    """Checks in the background whether a newer release exists. Any
+    failure (no network, odd answer, slow server) just means no notice.
+    MCRSYNC_LATEST_VERSION_URL overrides the URL; empty turns it off."""
+
+    TIMEOUT = 5
+    VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+    def __init__(self, url=None):
+        if url is None:
+            url = os.environ.get("MCRSYNC_LATEST_VERSION_URL", LATEST_VERSION_URL)
+        self.url = url
+        # set by the thread, read by the UI (atomic under the GIL)
+        self.newer_version = None
+
+    def start(self):
+        if not self.url:
+            return
+        # daemon: a hanging request never delays quitting
+        t = threading.Thread(target=self._check)
+        t.daemon = True
+        t.start()
+
+    def _check(self):
+        try:
+            self.newer_version = self.fetch()
+        except Exception:
+            # nothing may reach stderr: it would garble the curses screen
+            pass
+
+    @staticmethod
+    def user_agent():
+        """E.g. "mcrsync/2.1.1 (Linux; Python 3.4.10)"."""
+        import platform
+        return "mcrsync/{} ({}; Python {})".format(
+            VERSION, platform.system() or "unknown", platform.python_version())
+
+    def fetch(self):
+        """The latest version if newer than this one, else None. Raises on
+        anything unexpected."""
+        import urllib.request
+        req =urllib.request.Request(self.url, headers={"User-Agent": UpdateNotice.user_agent()})
+        resp = urllib.request.urlopen(req, timeout=UpdateNotice.TIMEOUT)
+        try:
+            data = json.loads(resp.read(1000).decode("utf-8"))
+        finally:
+            resp.close()
+        m = UpdateNotice.VERSION_RE.match(data["version"])
+        if not m:
+            raise ValueError("not a version number")
+        latest = tuple(int(n) for n in m.groups())
+        current = tuple(int(n) for n in VERSION.split("."))
+        return data["version"] if latest > current else None
+
 
 class SelfUpdater:
     """`mcrsync selfupdate`: replaces the running script file (symlinks
@@ -5393,6 +5476,7 @@ def main(stdscr):
     signal.signal(signal.SIGTERM, exit_on_signal)
     start_path = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
     app = App(stdscr, start_path)
+    app.update_notice.start()
     try:
         app.run()
     finally:
